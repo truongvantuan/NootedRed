@@ -32,7 +32,7 @@ namespace
     // Graphics-only profiles for the APUs NootedRed supports today.  Media stays disabled until the
     // VCN/UVD engine bring-up is implemented; the fields are already in the profile so that work can be
     // added without introducing a second device table.
-    const DeviceProfile::Profile kProfiles[] = {
+    constexpr DeviceProfile::Profile kProfiles[] = {
         {"Renoir", 0x1636, DeviceProfile::kRenoir, kProfileMinVersion, kProfileMaxVersion, {}, {}},
         {"Renoir/Green Sardine", 0x1638, DeviceProfile::kGreenSardine, kProfileMinVersion, kProfileMaxVersion, {}, {}},
         {"Cezanne", 0x164C, DeviceProfile::kRenoir, kProfileMinVersion, kProfileMaxVersion, {}, {}},
