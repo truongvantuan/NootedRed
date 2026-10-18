@@ -110,7 +110,16 @@ keepsyms=1 debug=0x144 itlwm_he=1 -NRedGLFix
 
 - `-NRedGLFix`：启用（默认关闭，必须加）。
 - `-NRedGLFixOff`：强制关闭，优先级高于 `-NRedGLFix`。
-- `-NRedGLFixResolve`：**仅 research 分支**的 resolver fallback；普通用户不要加。
+- `-NRedGLFixResolve`：**只有从 `research/patch-resolver` 分支构建的 kext 才识别这个参数**。
+  `master` 和 `feature/*` 的构建不包含 resolver 代码，会直接忽略它，不会产生任何效果；它也必须和
+  `-NRedGLFix` 一起使用才有意义。当前没有包含 resolver 的正式发布版，普通用户不要加。
+
+### 如何判断构建是否包含 resolver
+
+- 看分支/commit：只有 `research/patch-resolver` 的构建包含 `SignaturePatch` 和
+  `patchSignaturePage`；
+- 看源码：`NootedRed/UserPatches.cpp` 中出现 `kBootArgGLFixResolve`；
+- 用 `master`/`feature/*` 的 kext 加 `-NRedGLFixResolve` 不会有 resolver 日志，也不会报错。
 
 ### 6. 保存并重启
 
