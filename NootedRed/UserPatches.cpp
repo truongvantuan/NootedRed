@@ -595,12 +595,17 @@ static const UInt8 kMTLControlPage[] = {
     0xFF, 0x45, 0x31, 0xED, 0x47, 0x8B, 0x04, 0xAE, 0x46, 0x89, 0x04, 0xAA, 0x49, 0xFF, 0xC5, 0x49,
 };
 
-    // `AMD_render_cmd_encoder` pipeline setup: `and ecx, ~1` followed by `or ecx, eax` decides
-    // CB_COLOR_CONTROL.DISABLE_DUAL_QUAD. On Renoir the computed bit is 0, so patch it to a forced
-    // `or ecx, 1`. This is the equivalent of the community LegacyBlend `74 28` fix, adapted to the
-    // 15.8.1 Metal driver (first of three occurrences in this page is the pipeline path).
-    static const UInt8 kMTLControlFind[]    = {0x83, 0xE1, 0xFE};
-    static const UInt8 kMTLControlReplace[] = {0x83, 0xC9, 0x01};
+    // `AMD_render_cmd_encoder` pipeline setup decides CB_COLOR_CONTROL.DISABLE_DUAL_QUAD from
+    // `dualSource || !allowRBPlus`. On Renoir `HwInfo+0xa0` bit 1 is clear, so the driver skips the
+    // condition and leaves DISABLE_DUAL_QUAD=0. Open the gate (jnz -> jmp) and treat RB+ as allowed
+    // (setz al -> xor eax,eax), so only dual-source pipelines disable RB+; normal pipelines keep it.
+    // Both sites are in this page:
+    //  - 0x164: `75 0B` (jnz over the condition) -> `EB 0B`
+    //  - 0x198: `0F 94 C0` (setz al, !allowRBPlus) -> `31 C0 90`
+    static const UInt8 kMTLGateFind[]    = {0x75, 0x0B};
+    static const UInt8 kMTLGateReplace[] = {0xEB, 0x0B};
+    static const UInt8 kMTLAllowFind[]    = {0x0F, 0x94, 0xC0};
+    static const UInt8 kMTLAllowReplace[] = {0x31, 0xC0, 0x90};
 
 static const UInt8 kGLDriverDualQuadPage[] = {
     0x00, 0x48, 0x8B, 0x8B, 0x68, 0x0D, 0x00, 0x00, 0x8B, 0x83, 0x84, 0x18, 0x00, 0x00, 0x48, 0xBA,
@@ -866,8 +871,10 @@ static const UInt8 kGLDriverDualQuadPage[] = {
          kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverDualQuadPage,  kGLDriverDualQuadFind,
          kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
-        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage,        kMTLControlFind,
-         kMTLControlReplace,                        sizeof(kMTLControlFind),       0, 1},
+        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage,        kMTLGateFind,
+         kMTLGateReplace,                           sizeof(kMTLGateFind),          0, 1},
+        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage,        kMTLAllowFind,
+         kMTLAllowReplace,                          sizeof(kMTLAllowFind),         0, 1},
     };
     constexpr size_t kGLDriverPatchCount = arrsize(kGLDriverPatches);
 
