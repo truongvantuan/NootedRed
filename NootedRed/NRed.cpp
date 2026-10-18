@@ -67,8 +67,6 @@ void NRed::init()
 
     Backlight::singleton().init();
 
-    UserPatches::singleton().init();
-
     lilu.onKextLoadForce(&kextRadeonX6000Framebuffer);
     lilu.onKextLoadForce(&kextRadeonX5000HWLibs);
     lilu.onKextLoadForce(&kextRadeonX5000);
@@ -83,6 +81,10 @@ void NRed::init()
             PenguinWizardry::RuntimeMCManager::singleton().processPatcher(patcher);
         },
         nullptr);
+
+    // Register after NRed's patcher-load callback so the APU attributes used for patch-set selection are
+    // populated by the time UserPatches installs its hooks.
+    UserPatches::singleton().init();
 
     lilu.onKextLoadForce(
         nullptr, 0,

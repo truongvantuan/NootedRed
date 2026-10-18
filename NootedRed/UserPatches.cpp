@@ -25,6 +25,7 @@
 #include <Headers/kern_util.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserPatches.hpp>
+#include <NRed.hpp>
 #include <libkern/OSTypes.h>
 #include <mach/i386/vm_types.h>
 
@@ -878,6 +879,15 @@ static const UInt8 kGLDriverDualQuadPage[] = {
     };
     constexpr size_t kGLDriverPatchCount = arrsize(kGLDriverPatches);
 
+    // Version/family-aware patch sets.  Add one entry per validated macOS build; the exact page images
+    // still gate every site, so a set from another build can never modify a mismatched driver page.
+    // `15.8.1` is Darwin 24.6.0 (macOS 15.8.1, build 24H32).
+    static const UserPatches::PatchSet kGLDriverPatchSets[] = {
+        {"15.8.1 / gfx9 APU", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
+         UserPatches::kApuAll, kGLDriverPatches, kGLDriverPatchCount},
+    };
+    constexpr size_t kGLDriverPatchSetCount = sizeof(kGLDriverPatchSets) / sizeof(kGLDriverPatchSets[0]);
+
 }    // namespace
 
 UserPatches& UserPatches::singleton() { return moduleInstance; }
@@ -885,9 +895,9 @@ UserPatches& UserPatches::singleton() { return moduleInstance; }
 void UserPatches::init()
 {
     // `registerGLDriverFix` may already have been called; do not overwrite a custom table then.
-    if (this->patches == nullptr && this->patchCount == 0) {
-        this->patches    = kGLDriverPatches;
-        this->patchCount = kGLDriverPatchCount;
+    if (this->patches == nullptr && this->patchCount == 0 && this->patchSets == nullptr) {
+        this->patchSets     = kGLDriverPatchSets;
+        this->patchSetCount = kGLDriverPatchSetCount;
     }
 
     this->enabled = kGLFixDefaultEnabled;
@@ -911,10 +921,64 @@ void UserPatches::registerGLDriverFix(const PagePatch* const patchTable, const s
 {
     this->patches    = patchTable;
     this->patchCount = count;
+    this->patchSets  = nullptr;
+    this->patchSetCount = 0;
+}
+
+void UserPatches::registerPatchSets(const PatchSet* const sets, const size_t count)
+{
+    this->patchSets     = sets;
+    this->patchSetCount = count;
+    this->patches       = nullptr;
+    this->patchCount    = 0;
+}
+
+auto UserPatches::currentApuMask() const -> ApuMask
+{
+    const auto& attributes = NRed::singleton().getAttributes();
+
+    UInt8 mask = 0;
+    if (attributes.isRaven2()) { mask |= kApuRaven2; }
+    if (attributes.isPicasso()) { mask |= kApuPicasso; }
+    if (attributes.isRenoir()) { mask |= kApuRenoir; }
+    if (attributes.isRenoirE()) { mask |= kApuRenoirE; }
+    if (attributes.isGreenSardine()) { mask |= kApuGreenSardine; }
+
+    // An unset attribute set means the APU family is not known yet; match only generic sets instead of
+    // arbitrarily assuming Raven.
+    if (mask == 0) { mask = kApuAll; }
+
+    return static_cast<ApuMask>(mask);
+}
+
+void UserPatches::selectPatchSet()
+{
+    if (this->patches != nullptr || this->patchCount != 0) { return; }
+    if (this->patchSets == nullptr || this->patchSetCount == 0) { return; }
+
+    const auto version = currentKernelVersion();
+    const auto apus    = static_cast<UInt8>(this->currentApuMask());
+
+    for (size_t index = 0; index < this->patchSetCount; index++) {
+        const auto& set = this->patchSets[index];
+        if (version < set.minVersion || version > set.maxVersion) { continue; }
+        if ((static_cast<UInt8>(set.apus) & apus) == 0) { continue; }
+
+        this->patches    = set.patches;
+        this->patchCount = set.count;
+        SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
+               version.major(), version.minor(), apus);
+        return;
+    }
+
+    SYSLOG("UserPatch", "No patch set matches macOS %u.%u / APU mask 0x%02X; not installing any user patches",
+           version.major(), version.minor(), apus);
 }
 
 void UserPatches::processPatcher(KernelPatcher& patcher)
 {
+    this->selectPatchSet();
+
     if (this->patches == nullptr || this->patchCount == 0) {
         SYSLOG("UserPatch", "No user-space GL driver patches are configured, not installing any hooks");
         return;
