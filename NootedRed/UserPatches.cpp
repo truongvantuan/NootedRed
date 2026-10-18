@@ -957,8 +957,14 @@ auto UserPatches::currentApuMask() const -> ApuMask
     if (attributes.isRenoirE()) { mask |= kApuRenoirE; }
     if (attributes.isGreenSardine()) { mask |= kApuGreenSardine; }
 
-    // An unset attribute set means the APU family is not known yet.  Return zero so the selector only
-    // accepts the generic fallback set, not an arbitrary family entry.
+    // NRed leaves the attributes empty for the base Raven (0x15DD); model that explicitly.  A zero
+    // device ID means NRed has not populated its device information yet, so return an unknown mask and
+    // let the selector use the generic fallback rather than guessing a family.
+    if (mask == 0) {
+        if (NRed::singleton().getDeviceID() == 0x15DD) { mask = kApuRaven; }
+        else if (NRed::singleton().getDeviceID() == 0) { return static_cast<ApuMask>(0); }
+    }
+
     return static_cast<ApuMask>(mask);
 }
 
