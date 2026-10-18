@@ -44,6 +44,12 @@ namespace
     constexpr const DeviceProfile::Profile kFallbackProfile = {
         "unknown/fallback", 0, DeviceProfile::kUnknown, kProfileMinVersion, kProfileMaxVersion, {}, {}};
 
+    static_assert(sizeof(kProfiles) / sizeof(kProfiles[0]) == 6, "Update the profile tests when adding a device");
+    static_assert(kProfiles[0].graphics.conditionalDualQuad, "Current profiles must keep the rendering fix enabled");
+    static_assert(!kProfiles[0].media.hasUVD0, "Media remains disabled until VCN/UVD bring-up exists");
+    static_assert(!kProfiles[0].media.hasVCE, "Media remains disabled until VCN/UVD bring-up exists");
+    static_assert(!kProfiles[0].media.hasVCN0, "Media remains disabled until VCN/UVD bring-up exists");
+
 }    // namespace
 
 const DeviceProfile::Profile* DeviceProfile::current()
