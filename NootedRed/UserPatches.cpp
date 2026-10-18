@@ -883,8 +883,21 @@ static const UInt8 kGLDriverDualQuadPage[] = {
     // still gate every site, so a set from another build can never modify a mismatched driver page.
     // `15.8.1` is Darwin 24.6.0 (macOS 15.8.1, build 24H32).
     static const UserPatches::PatchSet kGLDriverPatchSets[] = {
-        {"15.8.1 / gfx9 APU", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
-         UserPatches::kApuAll, kGLDriverPatches, kGLDriverPatchCount},
+        // Family-specific entries first: all current gfx9 APUs share the same page data, but keeping
+        // them separate lets a future family diverge without changing the selection code.
+        {"15.8.1 / Renoir-family", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
+         static_cast<UserPatches::ApuMask>(UserPatches::kApuRenoir | UserPatches::kApuRenoirE |
+                                           UserPatches::kApuGreenSardine),
+         kGLDriverPatches, kGLDriverPatchCount},
+        {"15.8.1 / Raven-family", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
+         static_cast<UserPatches::ApuMask>(UserPatches::kApuRaven | UserPatches::kApuRaven2 |
+                                           UserPatches::kApuPicasso),
+         kGLDriverPatches, kGLDriverPatchCount},
+        // Generic fallback for the case where APU attributes are not populated yet.  It is deliberately
+        // last so a known family always wins.
+        {"15.8.1 / gfx9 APU fallback", PenguinWizardry::KernelVersion(24, 6),
+         PenguinWizardry::KernelVersion(24, 6), UserPatches::kApuAll, kGLDriverPatches,
+         kGLDriverPatchCount},
     };
     constexpr size_t kGLDriverPatchSetCount = sizeof(kGLDriverPatchSets) / sizeof(kGLDriverPatchSets[0]);
 
@@ -944,10 +957,8 @@ auto UserPatches::currentApuMask() const -> ApuMask
     if (attributes.isRenoirE()) { mask |= kApuRenoirE; }
     if (attributes.isGreenSardine()) { mask |= kApuGreenSardine; }
 
-    // An unset attribute set means the APU family is not known yet; match only generic sets instead of
-    // arbitrarily assuming Raven.
-    if (mask == 0) { mask = kApuAll; }
-
+    // An unset attribute set means the APU family is not known yet.  Return zero so the selector only
+    // accepts the generic fallback set, not an arbitrary family entry.
     return static_cast<ApuMask>(mask);
 }
 
@@ -962,7 +973,14 @@ void UserPatches::selectPatchSet()
     for (size_t index = 0; index < this->patchSetCount; index++) {
         const auto& set = this->patchSets[index];
         if (version < set.minVersion || version > set.maxVersion) { continue; }
-        if ((static_cast<UInt8>(set.apus) & apus) == 0) { continue; }
+
+        // An unknown APU (zero mask) may only use the generic fallback, never a family-specific set.
+        if (apus == 0) {
+            if (set.apus != UserPatches::kApuAll) { continue; }
+        }
+        else if ((static_cast<UInt8>(set.apus) & apus) == 0) {
+            continue;
+        }
 
         this->patches    = set.patches;
         this->patchCount = set.count;
