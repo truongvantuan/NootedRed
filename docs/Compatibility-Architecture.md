@@ -35,8 +35,11 @@ The goal is one kext binary and one data model that:
 | Data collection | `platform-data/`, `tools/collect_platform_data.py`, importer | — | captures binaries but no generated consumer; `kexts.json` has `binary: null` |
 | Media capability | personality advertises `IOGVACodec=AMDVCN2` unconditionally | `hasVCN0` from profile, all false | advertisement and kernel capability have different sources |
 
-Recent data points that motivate the redesign:
+This section records the state before the branch integration described in §8. After that integration,
+`master` carries the `PatchSet` framework, the Tahoe page data and the VDA module; the resolver and the
+iGPU/HwInfo research remain on their research branches.
 
+Recent data points that motivate the redesign:
 - `0x1638` and `0x164c` on the same macOS 26.7.1 build have identical GL/MTL driver hashes but different
   CU counts (8 vs 7), revisions and VRAM. APU metadata cannot be inferred from the driver binary.
 - The VDA branch generates kernel/kext UUIDs, driver versions and segment hashes, but the runtime only
@@ -296,7 +299,7 @@ illustrative until Milestone 4):
 | macOS build | APU | feature | level | evidence |
 | --- | --- | --- | --- | --- |
 | 15.8.1 (24H32) | Renoir `0x1638` | GL/Metal fix | validated | `analysis/hwinfo-capability-source.md` |
-| 15.8.1 (24H32) | Renoir `0x1638` | VDA decode/encode | validated (branch) | `analysis/vda-1581-hardware-validation.md` |
+| 15.8.1 (24H32) | Renoir `0x1638` | VDA decode/encode | validated (`-NRedVDA`, default off) | `analysis/vda-1581-hardware-validation.md` |
 | 26.7.1 | `0x1638`/`0x164c` | GL/Metal fix | experimental | `feature/tahoe-26.7.1` data, unverified |
 | any | Raven/Raven2/Picasso | GL/Metal fix | experimental | code-compatible, no hardware validation |
 | any | Raven/Raven2/Picasso | VDA | unavailable | VCN1 not implemented |
@@ -320,6 +323,12 @@ this order:
    verification and feed its decisions through the same plan/log path.
 5. **Research branches** (`research/igpu-hwinfo-logic`): documentation/analysis, merge last.
 
+Status: steps 1, 3 and 4 are merged into `master` (2026-10-19); step 2
+(`research/patch-resolver`) and step 5 remain on their research branches. No branch was rebased: the
+conflicts were resolved by keeping the framework's `PatchSet` selection and the VDA module's direct
+`processPatcher` wiring, and by merging both halves of `DeviceProfile` (capability/version model from
+this work plus the media data from the VDA work).
+
 ## 9. Milestones
 
 ### Milestone 1 — Foundation (implemented in this change)
@@ -329,10 +338,13 @@ this order:
   - explicit `Cezanne`/`Barcelo` families and corrected device-to-family mapping;
   - `SupportLevel` per profile (coarse roll-up);
   - `GraphicsPolicy::rbPlusAllowed` and `numShaderEngines` capability fields;
-  - `MediaPolicy::vcnGeneration` widened to `UInt16` (it could not hold `0x0202`);
+  - `MediaPolicy::vcnGeneration` is a `UInt32`-backed `VcnGeneration` enum (it was `UInt8` and could not
+    hold `0x0202`); the VDA work merged at the same time adds firmware, ring/fence and decode-capability
+    fields, with engine enablement still default-off;
   - version-aware lookup: `forDevice(deviceID, version)` and `current()` honour
     `minVersion`/`maxVersion`;
-  - compile-time invariants: unique device IDs, valid ranges, graphics enabled, media disabled.
+  - compile-time invariants: unique device IDs, valid ranges, graphics enabled, media enablement limited
+    to the hardware-validated profile.
 - `CompatTarget` target-identity type (`NootedRed/CompatTarget.{hpp,cpp}`): bounds-checked `LC_UUID`
   parsing from a thin 64-bit Mach-O header, and a read-only VFS header read for the file-backed
   `AMDRadeonX5000GLDriver` bundle. The result is logged as the canonical `Compat` identity line; it is

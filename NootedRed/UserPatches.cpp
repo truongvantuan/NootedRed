@@ -25,10 +25,12 @@
 #include <Headers/kern_util.hpp>
 #include <CompatTarget.hpp>
 #include <DeviceProfile.hpp>
+#include <NRed.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserPatches.hpp>
-#include <NRed.hpp>
 #include <TahoePatchData.hpp>
+#include <VCNBridge.hpp>
+#include <libkern/OSAtomic.h>
 #include <libkern/OSTypes.h>
 #include <mach/i386/vm_types.h>
 
@@ -39,6 +41,7 @@ namespace
 
     const char* const kBootArgGLFix    = "-NRedGLFix";
     const char* const kBootArgGLFixOff = "-NRedGLFixOff";
+    const char* const kBootArgVDA      = "-NRedVDA";
 
     // The patch bytes and page images below are specific to one driver build, and the native backend hooks
     // code signing page validation, so this is opt-in until the table has been filled in and tested.
@@ -938,17 +941,15 @@ void UserPatches::init()
     if (checkKernelArgument(kBootArgGLFix)) { this->enabled = true; }
     if (checkKernelArgument(kBootArgGLFixOff)) { this->enabled = false; }
 
-    if (!this->enabled) {
-        DBGLOG("UserPatch", "User-space GL driver patches are disabled");
+    this->vdaEnabled = checkKernelArgument(kBootArgVDA);
+
+    if (!this->enabled && !this->vdaEnabled) {
+        DBGLOG("UserPatch", "User-space driver patches are disabled");
         return;
     }
 
-    SYSLOG("UserPatch", "Enabling user-space GL driver patches (experimental)");
-
-    const auto error =
-        lilu.onPatcherLoad([](void* const, KernelPatcher& patcher) { singleton().processPatcher(patcher); }, nullptr);
-    SYSLOG_COND(error != LiluAPI::Error::NoError, "UserPatch", "Failed to register patcher load callback (%d)",
-                static_cast<int>(error));
+    if (this->enabled) { SYSLOG("UserPatch", "Enabling user-space GL driver patches (experimental)"); }
+    if (this->vdaEnabled) { SYSLOG("UserPatch", "Enabling user-space VDA driver patches (experimental)"); }
 }
 
 void UserPatches::registerGLDriverFix(const PagePatch* const patchTable, const size_t count)
@@ -1020,43 +1021,95 @@ void UserPatches::selectPatchSet()
            version.major(), version.minor(), apus);
 }
 
+void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t count)
+{
+    if (patchTable == nullptr || count == 0) { return; }
+
+    if (this->vdaTableCount >= arrsize(this->vdaTables)) {
+        SYSLOG("UserPatch", "Too many VDA patch tables, ignoring the extra one");
+        return;
+    }
+
+    this->vdaTables[this->vdaTableCount++] = {patchTable, count};
+}
+
 void UserPatches::processPatcher(KernelPatcher& patcher)
 {
+    if (!this->enabled && !this->vdaEnabled) {
+        DBGLOG("UserPatch", "User-space driver patches are disabled");
+        return;
+    }
+
     const auto* const profile = DeviceProfile::current();
+    auto              glEnabled = this->enabled;
     if (profile != nullptr) {
         SYSLOG("UserPatch", "Device profile: %s (family %s, level %s)", profile->name,
                DeviceProfile::familyName(profile->family), DeviceProfile::levelName(profile->level));
         if (!profile->graphics.conditionalDualQuad) {
             SYSLOG("UserPatch", "Graphics policy disables the conditional dual-quad fix for this profile");
-            return;
+            glEnabled = false;
         }
     }
 
-    this->selectPatchSet();
+    // Pick the version/family-aware GL patch set before the native page list is built from it.
+    if (glEnabled) { this->selectPatchSet(); }
 
-    if (this->patches == nullptr || this->patchCount == 0) {
+    // Read-only identity of the driver build the patch set was generated from.  Patch data is still keyed
+    // by the macOS version; this line is the first step toward keying it by binary identity instead
+    // (docs/Compatibility-Architecture.md).
+    if (glEnabled && this->patches != nullptr && this->patchCount != 0) {
+        CompatTarget::Identity glDriverIdentity{};
+        if (CompatTarget::readFileIdentity(glDriverIdentity, kGLDriverPath, CompatTarget::kGLDriver)) {
+            CompatTarget::logIdentity(glDriverIdentity);
+        }
+        else {
+            SYSLOG("UserPatch", "Could not read the GL driver identity from %s", kGLDriverPath);
+        }
+    }
+
+    // Build the native page list from whichever tables are enabled.  The VDA tables only exist on macOS 11
+    // and newer, where the native backend is the one being used, and only for the validated 0x1638 profile.
+    const auto vdaAllowed = this->vdaEnabled && profile != nullptr && profile->deviceID == 0x1638
+                            && profile->media.hasVCN0 && !NRed::singleton().hasExternalVideo();
+    if (this->vdaEnabled && !vdaAllowed) {
+        SYSLOG("UserPatch", "VDA patches requested but this profile is not the validated 0x1638 target");
+    }
+
+    this->nativePatchCount = 0;
+    for (auto& isVDA : this->nativePatchIsVDA) { isVDA = false; }
+
+    if (currentKernelVersion() >= MACOS_11) {
+        auto append = [this](const PagePatch* const table, const size_t count, const bool vda)
+        {
+            for (size_t i = 0; i < count && this->nativePatchCount < kMaxNativePatches; ++i) {
+                this->nativePatchIsVDA[this->nativePatchCount] = vda;
+                this->nativePatches[this->nativePatchCount++]   = table[i];
+            }
+        };
+
+        if (glEnabled) { append(this->patches, this->patchCount, false); }
+        if (vdaAllowed) {
+            for (size_t i = 0; i < this->vdaTableCount; ++i) {
+                append(this->vdaTables[i].table, this->vdaTables[i].count, true);
+            }
+        }
+
+        if (this->nativePatchCount == 0) {
+            SYSLOG("UserPatch", "No user-space driver patches are configured, not installing any hooks");
+            return;
+        }
+
+        SYSLOG_COND(!this->installNativePagePatcher(patcher), "UserPatch",
+                    "Failed to install the native page patch backend");
+        return;
+    }
+
+    if (!glEnabled || this->patches == nullptr || this->patchCount == 0) {
         SYSLOG("UserPatch", "No user-space GL driver patches are configured, not installing any hooks");
         return;
     }
 
-    // Read-only identity of the driver build the patch table was generated from.  The table is still keyed
-    // by the macOS version; this line is the first step toward keying it by binary identity instead
-    // (docs/Compatibility-Architecture.md).
-    CompatTarget::Identity glDriverIdentity{};
-    if (CompatTarget::readFileIdentity(glDriverIdentity, kGLDriverPath, CompatTarget::kGLDriver)) {
-        CompatTarget::logIdentity(glDriverIdentity);
-    }
-    else {
-        SYSLOG("UserPatch", "Could not read the GL driver identity from %s", kGLDriverPath);
-    }
-
-    if (currentKernelVersion() >= MACOS_11) {
-        SYSLOG_COND(!this->installNativePagePatcher(patcher), "UserPatch",
-                    "Failed to install the native page patch backend");
-    }
-    else {
-        SYSLOG_COND(!this->installUserPatcher(), "UserPatch", "Failed to register Lilu's user patches");
-    }
+    SYSLOG_COND(!this->installUserPatcher(), "UserPatch", "Failed to register Lilu's user patches");
 }
 
 auto UserPatches::installUserPatcher() -> bool
@@ -1143,70 +1196,75 @@ auto UserPatches::buildNativePatches() -> bool
 {
     this->nativePageCount = 0;
 
-    for (size_t patchIndex = 0; patchIndex < this->patchCount; patchIndex++) {
-        const auto& patch = this->patches[patchIndex];
+    for (size_t patchIndex = 0; patchIndex < this->nativePatchCount; patchIndex++) {
+        const auto& patch = this->nativePatches[patchIndex];
 
-        if (patch.find == nullptr || patch.replace == nullptr || patch.size == 0 || patch.count == 0) { continue; }
-
-        if (patch.size > kMaxPatchSize) {
-            SYSLOG("UserPatch", "Patch %zu is larger than %zu bytes, skipping it", patchIndex, kMaxPatchSize);
-            continue;
+        if (patch.find == nullptr || patch.replace == nullptr || patch.size == 0 || patch.count == 0
+            || patch.page == nullptr || patch.size > kMaxPatchSize || patch.skip > kMaxSitesPerPage
+            || patch.count > kMaxSitesPerPage)
+        {
+            SYSLOG("UserPatch", "Patch %zu is invalid; refusing the native page table", patchIndex);
+            return false;
         }
 
-        if (patch.page == nullptr) {
-            SYSLOG("UserPatch", "Patch %zu has no page image, the native backend cannot apply it", patchIndex);
-            continue;
+        // Locate the complete set of sites before creating a page, so a truncated record can never leave a
+        // partially patched driver behind.
+        size_t offsets[kMaxSitesPerPage]{};
+        size_t matched = 0;
+        size_t placed  = 0;
+        for (size_t offset = 0; offset + patch.size <= kPageSize; offset++) {
+            if (memcmp(patch.page + offset, patch.find, patch.size) != 0) { continue; }
+
+            if (matched++ < patch.skip) { continue; }
+
+            offsets[placed++] = offset;
+            if (placed == patch.count) { break; }
+        }
+
+        if (placed != patch.count) {
+            SYSLOG("UserPatch", "Failed to locate all occurrences of patch %zu (%zu missing); refusing the native page table",
+                   patchIndex, patch.count - placed);
+            return false;
         }
 
         NativePage* page{nullptr};
         for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
-            if (this->nativePages[pageIndex].image != patch.page) { continue; }
+            if (memcmp(this->nativePages[pageIndex].image, patch.page, kPageSize) != 0) { continue; }
             page = &this->nativePages[pageIndex];
             break;
         }
 
         if (page == nullptr) {
             if (this->nativePageCount >= kMaxNativePages) {
-                SYSLOG("UserPatch", "Too many distinct pages, only the first %zu are used", kMaxNativePages);
-                break;
+                SYSLOG("UserPatch", "Too many distinct pages for the native backend (%zu); refusing the native page table",
+                       kMaxNativePages);
+                return false;
             }
 
-            page        = &this->nativePages[this->nativePageCount++];
+            page = &this->nativePages[this->nativePageCount++];
+            *page = NativePage{};
             page->image = patch.page;
+            memcpy(&page->head, patch.page, sizeof(page->head));
         }
 
-        auto skip  = patch.skip;
-        auto count = patch.count;
+        if (page->siteCount + patch.count > kMaxSitesPerPage) {
+            SYSLOG("UserPatch", "Too many patch sites on a single page (%zu + %zu > %zu); refusing the native page table",
+                   page->siteCount, patch.count, kMaxSitesPerPage);
+            return false;
+        }
 
-        for (size_t offset = 0; offset + patch.size <= kPageSize; offset++) {
-            if (memcmp(patch.page + offset, patch.find, patch.size) != 0) { continue; }
-
-            if (skip != 0) {
-                skip--;
-                continue;
-            }
-
-            if (page->siteCount >= kMaxSitesPerPage) {
-                SYSLOG("UserPatch", "Too many patch sites on a single page, only the first %zu are used",
-                       kMaxSitesPerPage);
-                break;
-            }
-
+        page->vda = page->vda || this->nativePatchIsVDA[patchIndex];
+        for (size_t siteIndex = 0; siteIndex < patch.count; siteIndex++) {
             auto& site   = page->sites[page->siteCount++];
-            site.offset  = offset;
+            site.offset  = offsets[siteIndex];
             site.find    = patch.find;
             site.replace = patch.replace;
             site.size    = patch.size;
-
-            if (--count == 0) { break; }
         }
-
-        SYSLOG_COND(count != 0, "UserPatch", "Failed to locate all occurrences of patch %zu (%zu missing)", patchIndex,
-                    count);
     }
 
     if (this->nativePageCount == 0) {
-        SYSLOG("UserPatch", "No usable native page patches, each patch needs a %zu byte page image", kPageSize);
+        SYSLOG("UserPatch", "No usable native page patches, each patch needs a 4096 byte page image and a valid site");
         return false;
     }
 
@@ -1220,7 +1278,19 @@ void UserPatches::patchNativePage(const void* const data)
     for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
         const auto& page = this->nativePages[pageIndex];
 
-        if (memcmp(page.image, data, kPageSize) != 0) { continue; }
+        // Cheap first-word fingerprint before the full 4 KiB compare: the validation hook runs for every
+        // code-signed page, so avoid 12 full-page memcmps for every page.
+        UInt64 head{0};
+        memcpy(&head, data, sizeof(head));
+        if (head != page.head || memcmp(page.image, data, kPageSize) != 0) { continue; }
+
+        // VDA patches are only applied when the VCN bridge actually prepared both drivers and loaded X6000.
+        // If it failed (ABI mismatch, X6000 load failure), the stock VA/GVA driver stays in place and decode
+        // falls back to software instead of trying to use a non-existing engine.
+        if (page.vda && !VCNBridge::singleton().loadReady()) {
+            DBGLOG("UserPatch", "VDA page matched but the VCN bridge is not ready; leaving it unpatched");
+            continue;
+        }
 
         // The page matches, so these checks can only fail when the table is inconsistent; never patch then.
         for (size_t siteIndex = 0; siteIndex < page.siteCount; siteIndex++) {
@@ -1245,7 +1315,12 @@ void UserPatches::patchNativePage(const void* const data)
             SYSLOG("UserPatch", "Failed to restore kernel write protection");
         }
 
-        DBGLOG("UserPatch", "Patched %zu site(s) in a user-space GL driver page", page.siteCount);
+        DBGLOG("UserPatch", "Patched %zu site(s) in a user-space driver page", page.siteCount);
+
+        if (page.vda) {
+            const auto applied = static_cast<UInt32>(OSIncrementAtomic(&this->vdaAppliedCount) + 1);
+            NRed::singleton().setProp32("NRedVCNUserApplied", applied);
+        }
 
         return;
     }

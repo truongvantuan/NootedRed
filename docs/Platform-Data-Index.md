@@ -32,13 +32,6 @@ identifiers.
 
 The archive is untrusted external data and is not executed. Use it only for offline analysis.
 
-## Adding a dataset
-
-1. Copy the archive under `platform-data/<date>_<os>_<cpu>_<device-id>/`.
-2. Record its SHA-256.
-3. Add an entry here with OS, Darwin, APU/device ID, archive hash and initial findings.
-4. Never commit the archive or extracted Apple binaries.
-
 ## 2026-10-19 — macOS 26.7.1 (25G241), Renoir 0x1638
 
 | Field | Value |
@@ -66,3 +59,10 @@ MTL-image.bin fd46d5864a1b4c2e290b01b9c2676f6d91026ba58505b0a8393d35483afb74b4
 This confirms that for macOS 26.7.1 build 25G241, the same exact page images and PatchSet work for
 Renoir/Green Sardine `0x164c` and `0x1638`; APU-specific selection belongs in DeviceProfile, not in
 per-driver page data.
+
+## Adding a dataset
+
+1. Copy the archive under `platform-data/<date>_<os>_<cpu>_<device-id>/`.
+2. Record its SHA-256.
+3. Add an entry here with OS, Darwin, APU/device ID, archive hash and initial findings.
+4. Never commit the archive or extracted Apple binaries.

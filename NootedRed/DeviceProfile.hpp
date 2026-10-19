@@ -31,6 +31,11 @@
 // do" (graphics policy, media policy, validation level); it deliberately does not contain patch bytes or
 // per macOS build data, so adding an APU never duplicates patch data and adding a macOS build never
 // duplicates hardware facts.
+//
+// Graphics uses this profile to decide whether the Chromium dual-quad policy should be installed.
+// Media describes the VCN/UVD/VDA capabilities of the device (generation, firmware, ring sizes, decode
+// formats).  Engine enablement flags stay false unless the profile is hardware-validated, so populating
+// the media data does not change behaviour or require a second device-selection path.
 class DeviceProfile
 {
 public:
@@ -73,17 +78,44 @@ public:
         UInt8 numShaderEngines{1};
     };
 
+    // VCN IP generation, encoded as major << 8 | minor so it can double as the `ipVersion` handed to the
+    // firmware loader.  Raven/Picasso/Raven2 are VCN 1.0-class, Renoir/Cezanne/Barcelo are VCN 2.2.
+    enum VcnGeneration : UInt32 {
+        kVcnNone = 0,
+        kVcn1_0 = 0x0100,
+        kVcn2_2 = 0x0202,
+    };
+
+    // Formats the VCN generation can decode.  Hardware capabilities, not enablement.
+    struct DecodeCaps
+    {
+        bool h264{false};
+        bool hevc{false};
+        bool av1{false};
+    };
+
     struct MediaPolicy
     {
-        // Current NootedRed behaviour: all media engines are disabled.  These fields are the media
-        // capability surface described in docs/Compatibility-Architecture.md; keep them disabled until the
-        // engine bring-up is implemented and hardware-validated.
-        bool      hasUVD0{false};
-        bool      hasVCE{false};
-        bool      hasVCN0{false};
-        UInt16    vcnGeneration{0};    // e.g. 0x0100 (VCN 1.0) or 0x0202 (VCN 2.2); was UInt8 and could not hold 0x0202
+        // Media engine enablement flags.  Current NootedRed behaviour is graphics-only: only the
+        // hardware-validated 0x1638 profile may enable VCN0, every other profile carries VCN capability
+        // data but keeps the engine disabled until its own hardware validation.
+        bool hasUVD0{false};
+        bool hasVCE{false};
+        bool hasVCN0{false};
+
+        // VCN generation of this device.  kVcnNone means the media policy has no VCN data (fallback).
+        VcnGeneration vcnGeneration{kVcnNone};
+
+        // Name of the VCN firmware blob embedded by `HWLibs.cpp` (`Firmware/`), or nullptr.  The actual
+        // firmware load/PSP bring-up is a later phase; this only records which blob belongs to the device.
         const char* vcnFirmware{nullptr};
-        UInt32    vcnRingSize{0};
+
+        // Ring and fence allocation sizes for the future VCN submission path, in bytes.
+        UInt32 vcnRingSize{0};
+        UInt32 vcnFenceSize{0};
+
+        // Decode formats available on this VCN generation.
+        DecodeCaps decode{};
     };
 
     struct Profile
