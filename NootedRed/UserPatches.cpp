@@ -23,6 +23,7 @@
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
+#include <CompatTarget.hpp>
 #include <DeviceProfile.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserPatches.hpp>
@@ -918,8 +919,8 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
 {
     const auto* const profile = DeviceProfile::current();
     if (profile != nullptr) {
-        SYSLOG("UserPatch", "Device profile: %s (family %s)", profile->name,
-               DeviceProfile::familyName(profile->family));
+        SYSLOG("UserPatch", "Device profile: %s (family %s, level %s)", profile->name,
+               DeviceProfile::familyName(profile->family), DeviceProfile::levelName(profile->level));
         if (!profile->graphics.conditionalDualQuad) {
             SYSLOG("UserPatch", "Graphics policy disables the conditional dual-quad fix for this profile");
             return;
@@ -929,6 +930,17 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
     if (this->patches == nullptr || this->patchCount == 0) {
         SYSLOG("UserPatch", "No user-space GL driver patches are configured, not installing any hooks");
         return;
+    }
+
+    // Read-only identity of the driver build the patch table was generated from.  The table is still keyed
+    // by the macOS version; this line is the first step toward keying it by binary identity instead
+    // (docs/Compatibility-Architecture.md).
+    CompatTarget::Identity glDriverIdentity{};
+    if (CompatTarget::readFileIdentity(glDriverIdentity, kGLDriverPath, CompatTarget::kGLDriver)) {
+        CompatTarget::logIdentity(glDriverIdentity);
+    }
+    else {
+        SYSLOG("UserPatch", "Could not read the GL driver identity from %s", kGLDriverPath);
     }
 
     if (currentKernelVersion() >= MACOS_11) {
