@@ -38,9 +38,11 @@ static UserPatches moduleInstance;
 namespace
 {
 
-    const char* const kBootArgGLFix    = "-NRedGLFix";
-    const char* const kBootArgGLFixOff = "-NRedGLFixOff";
-    const char* const kBootArgVDA      = "-NRedVDA";
+    const char* const kBootArgGLFix            = "-NRedGLFix";
+    const char* const kBootArgGLFixOff         = "-NRedGLFixOff";
+    const char* const kBootArgGLFixResolve     = "-NRedGLFixResolve";
+    const char* const kBootArgGLFixResolveOnly = "-NRedGLFixResolveOnly";
+    const char* const kBootArgVDA              = "-NRedVDA";
 
     // The patch bytes and page images below are specific to one driver build, and the native backend hooks
     // code signing page validation, so this is opt-in until the table has been filled in and tested.
@@ -872,6 +874,42 @@ static const UInt8 kGLDriverDualQuadPage[] = {
     0x00, 0x3D, 0xF9, 0x88, 0x00, 0x00, 0x0F, 0x85, 0x97, 0x01, 0x00, 0x00, 0x45, 0x84, 0xD2, 0xB8,
 };
 
+    static const UInt8 kResolverMask32[] = {
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    };
+    static const UInt8 kResolverHwCtx[] = {
+        0xAC, 0x00, 0x00, 0x00, 0x41, 0x83, 0xF8, 0x13, 0x77, 0x45, 0xC7, 0x07, 0x8D, 0x00, 0x00, 0x00,
+        0xC7, 0x47, 0x78, 0x04, 0x00, 0x00, 0x00, 0xC5, 0xF8, 0x28, 0x05, 0x50, 0xFE, 0x0D, 0x00, 0xC5,
+    };
+    static const UInt8 kResolverDualCtx[] = {
+        0x88, 0xA0, 0x00, 0x00, 0x00, 0xD1, 0xE9, 0x83, 0xE1, 0x01, 0x8B, 0x83, 0x98, 0x13, 0x00, 0x00,
+        0x83, 0xE0, 0xFE, 0x09, 0xC8, 0x89, 0x83, 0x98, 0x13, 0x00, 0x00, 0x48, 0x8B, 0x8B, 0x68, 0x0D,
+    };
+    static const UInt8 kResolverGateCtx[] = {
+        0xFF, 0xFF, 0x48, 0x8B, 0x85, 0x28, 0xFE, 0xFF, 0xFF, 0xF6, 0x80, 0xA0, 0x00, 0x00, 0x00, 0x02,
+        0x75, 0x0B, 0x31, 0xC0, 0x4C, 0x8B, 0x9D, 0x80, 0xFE, 0xFF, 0xFF, 0xEB, 0x2C, 0x83, 0xBD, 0x70,
+    };
+    static const UInt8 kResolverSetzCtx[] = {
+        0xFF, 0x48, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x49, 0x85, 0x54, 0x03, 0x08,
+        0x0F, 0x94, 0xC0, 0x08, 0xC8, 0x4C, 0x8B, 0xB5, 0x88, 0xFE, 0xFF, 0xFF, 0x48, 0x8B, 0xB5, 0x50,
+    };
+
+    // Resolver fallback for the 15.8.1 GL/Metal sites.  The 32-byte windows are extracted from the same
+    // validated page images; the first two are tied to their GL driver file page, the Metal ones are not
+    // page-restricted because the Metal driver lives in the shared cache.
+    static const UserPatches::SignaturePatch kResolverSignatures[] = {
+        {kResolverHwCtx, kResolverMask32, sizeof(kResolverHwCtx), 16, kGLDriverHwInfoReplace,
+         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000},
+        {kResolverDualCtx, kResolverMask32, sizeof(kResolverDualCtx), 16, kGLDriverDualQuadReplace,
+         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000},
+        {kResolverGateCtx, kResolverMask32, sizeof(kResolverGateCtx), 16, kMTLGateReplace,
+         sizeof(kMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
+        {kResolverSetzCtx, kResolverMask32, sizeof(kResolverSetzCtx), 16, kMTLAllowReplace,
+         sizeof(kMTLAllowReplace), 0, 1, ~static_cast<UInt64>(0)},
+    };
+    constexpr size_t kResolverSignatureCount = arrsize(kResolverSignatures);
+
     static const UserPatches::PagePatch kGLDriverPatches[] = {
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverHwInfoPage,    kGLDriverHwInfoFind,
          kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
@@ -908,16 +946,16 @@ static const UInt8 kGLDriverDualQuadPage[] = {
         {"15.8.1 / Renoir-family", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
          static_cast<UserPatches::ApuMask>(UserPatches::kApuRenoir | UserPatches::kApuRenoirE |
                                            UserPatches::kApuGreenSardine),
-         kGLDriverPatches, kGLDriverPatchCount},
+         kGLDriverPatches, kGLDriverPatchCount, kResolverSignatures, kResolverSignatureCount},
         {"15.8.1 / Raven-family", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
          static_cast<UserPatches::ApuMask>(UserPatches::kApuRaven | UserPatches::kApuRaven2 |
                                            UserPatches::kApuPicasso),
-         kGLDriverPatches, kGLDriverPatchCount},
+         kGLDriverPatches, kGLDriverPatchCount, kResolverSignatures, kResolverSignatureCount},
         // Generic fallback for the case where APU attributes are not populated yet.  It is deliberately
         // last so a known family always wins.
         {"15.8.1 / gfx9 APU fallback", PenguinWizardry::KernelVersion(24, 6),
          PenguinWizardry::KernelVersion(24, 6), UserPatches::kApuAll, kGLDriverPatches,
-         kGLDriverPatchCount},
+         kGLDriverPatchCount, kResolverSignatures, kResolverSignatureCount},
         // macOS 26.7.1 (Darwin 25.6.0).  Exact page images make this a no-op on any other driver build.
         {"26.7.1 / gfx9 APU", PenguinWizardry::KernelVersion(25, 6), PenguinWizardry::KernelVersion(25, 6),
          UserPatches::kApuAll, kTahoeGLDriverPatches, kTahoeGLDriverPatchCount},
@@ -940,6 +978,11 @@ void UserPatches::init()
     if (checkKernelArgument(kBootArgGLFix)) { this->enabled = true; }
     if (checkKernelArgument(kBootArgGLFixOff)) { this->enabled = false; }
 
+    // The resolver is a GL-only fallback: it must never be active when the GL fix itself is off.
+    this->resolverOnly    = this->enabled && checkKernelArgument(kBootArgGLFixResolveOnly);
+    this->resolverEnabled = this->enabled
+                            && (this->resolverOnly || checkKernelArgument(kBootArgGLFixResolve));
+
     this->vdaEnabled = checkKernelArgument(kBootArgVDA);
 
     if (!this->enabled && !this->vdaEnabled) {
@@ -947,7 +990,12 @@ void UserPatches::init()
         return;
     }
 
-    if (this->enabled) { SYSLOG("UserPatch", "Enabling user-space GL driver patches (experimental)"); }
+    if (this->enabled) {
+        SYSLOG("UserPatch", "Enabling user-space GL driver patches (experimental)");
+        if (this->resolverEnabled) {
+            SYSLOG("UserPatch", "Resolver fallback enabled%s", this->resolverOnly ? " (resolver-only QA mode)" : "");
+        }
+    }
     if (this->vdaEnabled) { SYSLOG("UserPatch", "Enabling user-space VDA driver patches (experimental)"); }
 }
 
@@ -1009,8 +1057,10 @@ void UserPatches::selectPatchSet()
             continue;
         }
 
-        this->patches    = set.patches;
-        this->patchCount = set.count;
+        this->patches        = set.patches;
+        this->patchCount     = set.count;
+        this->signatures     = set.signatures;
+        this->signatureCount = set.signatureCount;
         SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
                version.major(), version.minor(), apus);
         return;
@@ -1052,6 +1102,13 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
 
     // Pick the version/family-aware GL patch set before the native page list is built from it.
     if (glEnabled) { this->selectPatchSet(); }
+
+    // The resolver is a fallback for the GL patch sites; honour the profile gate for it as well.
+    if (!glEnabled) {
+        this->resolverEnabled = false;
+        this->signatures      = nullptr;
+        this->signatureCount  = 0;
+    }
 
     // Build the native page list from whichever tables are enabled.  The VDA tables only exist on macOS 11
     // and newer, where the native backend is the one being used, and only for the validated 0x1638 profile.
@@ -1260,9 +1317,98 @@ auto UserPatches::buildNativePatches() -> bool
     return true;
 }
 
-void UserPatches::patchNativePage(const void* const data)
+auto UserPatches::isPatchedPage(const NativePage& page, const UInt8* const data) const -> bool
+{
+    if (page.image == nullptr || data == nullptr) { return false; }
+
+    for (size_t offset = 0; offset < kPageSize; offset++) {
+        const NativeSite* site{nullptr};
+        for (size_t siteIndex = 0; siteIndex < page.siteCount; siteIndex++) {
+            const auto& candidate = page.sites[siteIndex];
+            if (offset >= candidate.offset && offset < candidate.offset + candidate.size) {
+                site = &candidate;
+                break;
+            }
+        }
+
+        if (site != nullptr) {
+            if (data[offset] != site->replace[offset - site->offset]) { return false; }
+        }
+        else if (data[offset] != page.image[offset]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOffset)
+{
+    if (!this->resolverEnabled || this->signatures == nullptr || this->signatureCount == 0 || data == nullptr) {
+        return;
+    }
+
+    const auto* const bytes = static_cast<const UInt8*>(data);
+
+    for (size_t signatureIndex = 0; signatureIndex < this->signatureCount; signatureIndex++) {
+        const auto& signature = this->signatures[signatureIndex];
+
+        if (signature.context == nullptr || signature.mask == nullptr || signature.replace == nullptr) { continue; }
+        if (signature.contextSize == 0 || signature.contextSize > kPageSize) { continue; }
+        if (signature.patchOffset + signature.replaceSize > signature.contextSize) { continue; }
+        if (signature.pageOffset != ~static_cast<UInt64>(0) && signature.pageOffset != pageOffset) { continue; }
+
+        auto skip  = signature.skip;
+        auto count = signature.count;
+
+        for (size_t offset = 0; offset + signature.contextSize <= kPageSize; offset++) {
+            bool matches = true;
+            for (size_t index = 0; index < signature.contextSize; index++) {
+                if ((bytes[offset + index] & signature.mask[index])
+                    != (signature.context[index] & signature.mask[index]))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if (!matches) { continue; }
+
+            if (skip != 0) {
+                skip--;
+                continue;
+            }
+
+            if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) {
+                SYSLOG("UserPatch", "Resolver: failed to disable kernel write protection");
+                return;
+            }
+
+            memcpy(const_cast<UInt8*>(bytes) + offset + signature.patchOffset, signature.replace,
+                   signature.replaceSize);
+
+            if (MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) {
+                SYSLOG("UserPatch", "Resolver: failed to restore kernel write protection");
+            }
+
+            SYSLOG("UserPatch", "Resolver patched a signature site at page offset 0x%zX", offset);
+
+            if (--count == 0) { break; }
+        }
+
+        DBGLOG("UserPatch", "Resolver: %zu site(s) still unmatched for signature %zu", count, signatureIndex);
+    }
+}
+
+void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffset)
 {
     if (data == nullptr) { return; }
+
+    // Test mode: bypass the safe exact-page path and exercise the resolver.  It is intentionally separated
+    // by a boot argument so it cannot be enabled by accident.
+    if (this->resolverOnly) {
+        this->patchSignaturePage(data, pageOffset);
+        return;
+    }
 
     for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
         const auto& page = this->nativePages[pageIndex];
@@ -1313,6 +1459,15 @@ void UserPatches::patchNativePage(const void* const data)
 
         return;
     }
+
+    // The page may already contain our replacement bytes from an earlier validation (the page cache is
+    // shared).  Do not rescan it with the resolver; that would only produce false "signature not found"
+    // errors and unnecessary work.
+    for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
+        if (this->isPatchedPage(this->nativePages[pageIndex], static_cast<const UInt8*>(data))) { return; }
+    }
+
+    this->patchSignaturePage(data, pageOffset);
 }
 
 void UserPatches::wrapCsValidatePage(void* const vnode, void* const pager, const UInt64 pageOffset,
@@ -1322,7 +1477,7 @@ void UserPatches::wrapCsValidatePage(void* const vnode, void* const pager, const
                                                                     nx);
 
     // Only patch pages that passed validation, so that a rejected page is never turned into a valid-looking one.
-    if (validated != nullptr && *validated != 0) { singleton().patchNativePage(data); }
+    if (validated != nullptr && *validated != 0) { singleton().patchNativePage(data, pageOffset); }
 }
 
 boolean_t UserPatches::wrapCsValidateRange(void* const vnode, void* const pager, const UInt64 pageOffset,
@@ -1335,7 +1490,7 @@ boolean_t UserPatches::wrapCsValidateRange(void* const vnode, void* const pager,
 
     const auto* const bytes = static_cast<const UInt8*>(data);
     for (size_t offset = 0; offset + kPageSize <= dataSize; offset += kPageSize) {
-        singleton().patchNativePage(bytes + offset);
+        singleton().patchNativePage(bytes + offset, pageOffset + offset);
     }
 
     return result;

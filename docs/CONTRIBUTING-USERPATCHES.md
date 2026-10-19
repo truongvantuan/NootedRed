@@ -9,15 +9,18 @@ The normal kext build and coding conventions are in `AGENTS.md`; read that first
 
 ## Status and branches
 
-- `master`: the validated conditional gate/setz fix for macOS 15.8.1 / Renoir. It is the production
-  baseline.
-- `feature/multi-os-multi-apu`: version- and family-aware `PatchSet` table, APU masks, and the
-  `tools/gen_patch_data.py` generator. Only 15.8.1 data is included; other builds must be generated.
-- `research/patch-resolver`: opt-in masked-context resolver prototype. Exact page images remain the
-  primary path.
+- `master`: the integrated tree — version- and family-aware `PatchSet` selection, 15.8.1 and 26.7.1 page
+  data, the validated VDA/VCN module (default off) and the opt-in masked-context resolver. It is the
+  production baseline.
+- `feature/multi-os-multi-apu`, `feature/tahoe-26.7.1`, `feature/vda-hardware-decode`: merged into
+  `master`; kept for history.
+- `research/patch-resolver`: source of the resolver prototype now merged into `master` (see
+  [`analysis/patch-resolver.md`](../analysis/patch-resolver.md)); exact page images remain the primary
+  path.
+- `research/igpu-hwinfo-logic`: iGPU HwInfo/UBM research notes.
 
-Do not assume a branch's data applies to another macOS build. A mismatched page image is a no-op by
-design, not a fallback.
+Do not assume a set's data applies to another macOS build. A mismatched page image is a no-op by design,
+not a fallback; the resolver only runs when explicitly enabled and a miss is still a no-op.
 
 ## Architecture
 
@@ -180,7 +183,7 @@ Then install the kext, reboot, and check:
 Base Raven is special: `NRed` intentionally leaves `Attributes` empty for `0x15DD`, so
 `currentApuMask()` maps that device ID to `kApuRaven` explicitly.
 
-## Resolver prototype
+## Resolver fallback
 
 The resolver is an opt-in fallback for builds whose page image is not known. It is a short masked
 context around the patch site:
@@ -202,7 +205,8 @@ struct SignaturePatch {
 Rules:
 
 - exact page images are tried first;
-- resolver runs only with `-NRedGLFixResolve`;
+- resolver runs only with `-NRedGLFixResolve` (QA testing can use `-NRedGLFixResolveOnly` to bypass the
+  exact-page path and exercise the resolver on its own);
 - a miss is a no-op;
 - the current 15.8.1 signatures are 32-byte contexts generated from the same page images;
 - MTL signatures currently have no module filter; do not treat them as safe for arbitrary pages.
@@ -230,8 +234,9 @@ semantic correctness.
 
 ## Known limitations
 
-- The framework can select versions/families, but only 15.8.1 page data is present.
+- The framework can select versions/families; 15.8.1 and 26.7.1 page data are present.
 - Multi-APU family entries share 15.8.1 data; only Renoir has been validated.
-- The resolver is a prototype; its 32-byte contexts are still per-build data.
+- The resolver is merged but still prototype-grade: its 32-byte contexts are per-build data and the MTL
+  signatures lack module filtering (hardening is Milestone 3 of the compatibility architecture).
 - Full RB+ enablement is not safe on Renoir with isolated HwInfo/golden patches; keep the conditional
   gate/setz path.

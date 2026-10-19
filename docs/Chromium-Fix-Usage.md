@@ -110,16 +110,18 @@ keepsyms=1 debug=0x144 itlwm_he=1 -NRedGLFix
 
 - `-NRedGLFix`：启用（默认关闭，必须加）。
 - `-NRedGLFixOff`：强制关闭，优先级高于 `-NRedGLFix`。
-- `-NRedGLFixResolve`：**只有从 `research/patch-resolver` 分支构建的 kext 才识别这个参数**。
-  `master` 和 `feature/*` 的构建不包含 resolver 代码，会直接忽略它，不会产生任何效果；它也必须和
-  `-NRedGLFix` 一起使用才有意义。当前没有包含 resolver 的正式发布版，普通用户不要加。
+- `-NRedGLFixResolve`：整页镜像不匹配时启用 masked-context resolver 兜底（实验性，默认关闭）。
+  必须和 `-NRedGLFix` 一起使用；页镜像匹配时仍走原来的安全路径，不匹配时 resolver 也只是尝试，
+  失败即 no-op。
+- `-NRedGLFixResolveOnly`：仅用于 QA 测试——跳过整页镜像、只走 resolver，用来单独验证签名是否命中。
+  日常使用不要加。
 
-### 如何判断构建是否包含 resolver
+### 关于 resolver
 
-- 看分支/commit：只有 `research/patch-resolver` 的构建包含 `SignaturePatch` 和
-  `patchSignaturePage`；
-- 看源码：`NootedRed/UserPatches.cpp` 中出现 `kBootArgGLFixResolve`；
-- 用 `master`/`feature/*` 的 kext 加 `-NRedGLFixResolve` 不会有 resolver 日志，也不会报错。
+- 当前 `master` 已包含 resolver（`SignaturePatch` / `patchSignaturePage`）；
+- 默认行为不变：不匹配的版本仍然 no-op，只有显式加 `-NRedGLFixResolve` 才会尝试 resolver；
+- resolver 使用 32 字节上下文，仍可能受驱动内部指令重排影响，需要按目标版本实测；
+- MTL 签名目前还没有模块过滤，建议只在你自己验证过的系统上开启。
 
 ### 6. 保存并重启
 
@@ -215,7 +217,7 @@ ls -lt /Library/Logs/DiagnosticReports/Kernel_*.gpuRestart
 | macOS 15.8.1 / Renoir | 已验证 |
 | macOS 15.8.1 / Raven、Raven2、Picasso | 代码可匹配，未实机验证 |
 | 其他 macOS 版本 | 没有页面数据，默认 no-op |
-| resolver fallback | research 原型，未作为稳定功能 |
+| resolver fallback | 已合并进 master，默认关闭；需 `-NRedGLFixResolve`，模块过滤/语义校验待 M3 |
 
 想在自己系统上使用其他版本，需要按 [贡献者文档](CONTRIBUTING-USERPATCHES.md) 生成页面数据，不能直接改版本号。
 
@@ -267,7 +269,8 @@ EFI/OC/Kexts/NootedRed.kext
 - 确认使用的是 15.8.1 / 对应驱动的构建；
 - 确认 boot-args 有 `-NRedGLFix`；
 - 确认没有和 BFixup 等用户态 patch 同时使用；
-- 其他 macOS 版本当前没有页面数据，会 no-op，不会修复。
+- 其他 macOS 版本没有页面数据时默认 no-op；确认已加 `-NRedGLFixResolve`（resolver 仍可能因签名
+  不匹配而 no-op，需要按目标版本实测）。
 
 ### 应用崩溃但没有 GPU reset
 
