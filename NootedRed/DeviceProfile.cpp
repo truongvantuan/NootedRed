@@ -29,16 +29,17 @@ namespace
     constexpr auto kProfileMinVersion = MACOS_10_4_X;
     constexpr auto kProfileMaxVersion = MACOS_26_X;
 
-    // Phase 1 records the VCN capability data for each APU family but keeps every engine disabled.
-    // Enablement is flipped per profile only after the firmware/ring bring-up exists and has been validated
-    // on hardware (Phases 2-3).
+    // Phase 2 records the VCN capability data for each APU family.  The engine enablement flag is only set
+    // on the already-validated profile: 0x1638.  Everything else stays disabled until its own hardware
+    // validation (Phase 3/5).
     //
     // The ring/fence sizes are the allocation sizes the future VCN submission path will request.  They are
     // carried in the profile now so Phase 3 has a single source of truth; nothing uses them yet.
-    constexpr auto makeVcnMedia(const DeviceProfile::VcnGeneration generation, const char* const firmware)
-        -> DeviceProfile::MediaPolicy
+    constexpr auto makeVcnMedia(const DeviceProfile::VcnGeneration generation, const char* const firmware,
+                                const bool enableVcn0 = false) -> DeviceProfile::MediaPolicy
     {
         DeviceProfile::MediaPolicy media{};
+        media.hasVCN0        = enableVcn0;
         media.vcnGeneration = generation;
         media.vcnFirmware   = firmware;
         media.vcnRingSize   = 0x10000;    // 64 KiB, planning default until Phase 3 validates the real size
@@ -50,15 +51,16 @@ namespace
     }
 
     // HWLibs embeds `Firmware/ativvaxy_rv.dat` for VCN 1.0 and `Firmware/ativvaxy_nv.dat` for VCN 2.2.
-    constexpr auto kVcn1Media = makeVcnMedia(DeviceProfile::kVcn1_0, "ativvaxy_rv.dat");
-    constexpr auto kVcn2Media = makeVcnMedia(DeviceProfile::kVcn2_2, "ativvaxy_nv.dat");
+    constexpr auto kVcn1Media     = makeVcnMedia(DeviceProfile::kVcn1_0, "ativvaxy_rv.dat");
+    constexpr auto kVcn2Media     = makeVcnMedia(DeviceProfile::kVcn2_2, "ativvaxy_nv.dat");
+    constexpr auto kVcn2MediaVcn0 = makeVcnMedia(DeviceProfile::kVcn2_2, "ativvaxy_nv.dat", true);
 
-    // Graphics profiles for the APUs NootedRed supports today.  The media capability data is populated, but
-    // every `hasUVD0`/`hasVCE`/`hasVCN0` flag stays false until the VCN/UVD bring-up is implemented.
+    // Graphics profiles for the APUs NootedRed supports today.  Only Renoir/Green Sardine 0x1638 (the
+    // hardware-validated VDA target) advertises VCN0; the other VCN 2.2 APUs keep it off until validated.
     constexpr DeviceProfile::Profile kProfiles[] = {
         {"Renoir", 0x1636, DeviceProfile::kRenoir, kProfileMinVersion, kProfileMaxVersion, {}, kVcn2Media},
         {"Renoir/Green Sardine", 0x1638, DeviceProfile::kGreenSardine, kProfileMinVersion, kProfileMaxVersion, {},
-         kVcn2Media},
+         kVcn2MediaVcn0},
         {"Cezanne", 0x164C, DeviceProfile::kRenoir, kProfileMinVersion, kProfileMaxVersion, {}, kVcn2Media},
         {"Barcelo", 0x15E7, DeviceProfile::kGreenSardine, kProfileMinVersion, kProfileMaxVersion, {}, kVcn2Media},
         {"Raven", 0x15DD, DeviceProfile::kRaven, kProfileMinVersion, kProfileMaxVersion, {}, kVcn1Media},
@@ -74,10 +76,11 @@ namespace
     }
 
     template<size_t N>
-    constexpr auto allMediaDisabled(const DeviceProfile::Profile (&profiles)[N]) -> bool
+    constexpr auto onlyValidatedProfileEnabled(const DeviceProfile::Profile (&profiles)[N]) -> bool
     {
         for (const auto& profile : profiles) {
-            if (!mediaDisabled(profile.media)) { return false; }
+            const auto enabled = !mediaDisabled(profile.media);
+            if (enabled != (profile.deviceID == 0x1638)) { return false; }
         }
 
         return true;
@@ -101,7 +104,8 @@ namespace
 
     static_assert(sizeof(kProfiles) / sizeof(kProfiles[0]) == 6, "Update the profile tests when adding a device");
     static_assert(kProfiles[0].graphics.conditionalDualQuad, "Current profiles must keep the rendering fix enabled");
-    static_assert(allMediaDisabled(kProfiles), "Phase 1 keeps UVD/VCE/VCN disabled until the engine bring-up exists");
+    static_assert(onlyValidatedProfileEnabled(kProfiles),
+                  "Only the hardware-validated 0x1638 profile may enable VCN0 until the others are tested");
     static_assert(allVcnDataPresent(kProfiles),
                   "Every profile needs VCN data, H.264/HEVC decode and no AV1 before media can be enabled");
     static_assert(mediaDisabled(kFallbackProfile.media), "The fallback profile must not enable any media engine");

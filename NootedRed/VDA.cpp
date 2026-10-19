@@ -62,17 +62,11 @@ void VDA::processPatcher()
            media.vcnRingSize, media.vcnFenceSize, static_cast<UInt32>(media.decode.h264),
            static_cast<UInt32>(media.decode.hevc), static_cast<UInt32>(media.decode.av1));
 
-    // Phase 1 has no engine bring-up, so a request cannot be honoured yet.  This is user-visible because
-    // -NRedVDA is an explicit opt-in; software decode keeps working and no media engine is touched.
     if (!this->requested) { return; }
 
-    if (!this->mediaEnginesEnabled()) {
-        SYSLOG("VDA",
-               "-NRedVDA is set, but hardware decode is not available for %s yet (UVD0=%u VCE=%u VCN0=%u); software "
-               "decode stays in use",
-               profile->name, static_cast<UInt32>(media.hasUVD0), static_cast<UInt32>(media.hasVCE),
-               static_cast<UInt32>(media.hasVCN0));
-    }
+    // The bridge reports its own readiness under the VCN tag; VDA only publishes the requested profile and
+    // generation here.  If the bridge fails, software decode stays in use.
+    DBGLOG("VDA", "-NRedVDA requested for %s; VCN bridge readiness is reported by the VCN module", profile->name);
 
     NRed::singleton().setProp32("NRedVDARequested", static_cast<UInt32>(this->requested));
     NRed::singleton().setProp32("NRedVDAMediaEnabled", static_cast<UInt32>(this->mediaEnginesEnabled()));

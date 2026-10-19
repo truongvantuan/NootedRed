@@ -22,12 +22,11 @@
 
 #pragma once
 
-// Runtime gate for the VDA/VCN hardware video decode work.
+// Runtime policy layer for the VDA/VCN hardware video decode work.
 //
-// Phase 1 is intentionally inert: `init()` only records the opt-in `-NRedVDA` boot argument and
-// `processPatcher()` logs the media capability of the running device's `DeviceProfile`.  No VCN engine is
-// enabled until the corresponding bring-up exists, so `mediaEnginesEnabled()` stays false even when the
-// boot argument is present.  Later phases set `ready` only after firmware/ring initialization succeeds.
+// `init()` records the opt-in `-NRedVDA` boot argument and `processPatcher()` logs the media capability of
+// the running device's `DeviceProfile`.  The actual engine/bridge readiness lives in `VCNBridge`; this class
+// only keeps the user intent and the profile view, and remains inert when the boot argument is absent.
 class VDA
 {
     bool requested{false};
@@ -46,7 +45,7 @@ public:
     // True when the user explicitly opted in with -NRedVDA.
     bool isRequested() const { return this->requested; }
 
-    // True once a media engine has been initialized and validated.  Phase 1 never sets this.
+    // Kept for the runtime gate contract; the bridge owns the actual ready state.
     bool isReady() const { return this->ready; }
 
     // Effective media enablement: opt-in requested and the engine bring-up completed.

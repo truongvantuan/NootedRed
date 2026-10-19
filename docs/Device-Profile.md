@@ -45,9 +45,9 @@ struct Profile {
 };
 ```
 
-The media data is populated now that Phase 1 of the VDA plan is implemented, but every profile keeps
-`hasUVD0 = hasVCE = hasVCN0 = false`. The engine flags are enablement, not capability: they only flip after
-the firmware/ring bring-up exists and has been validated on hardware.
+The media data is populated for every family. The engine flags are enablement, not capability: only the
+designated `0x1638` VDA target enables `hasVCN0` (and only after the `-NRedVDA` bridge has prepared both
+drivers and allocated the engine); all other profiles keep the flags false until their own validation.
 
 ## Selection
 
@@ -67,38 +67,41 @@ disabled.
 
 ## Media capability data
 
-Phase 1 records the media capability data per family; the engine enablement flags stay `false` for every
-profile.
+The media capability data is populated per family. The engine enablement flag is only set on the
+designated VDA target (`0x1638`, hardware validation pending); everything else stays off until its own
+validation.
 
 | device ID | profile | VCN | firmware | H.264 | HEVC | AV1 | engines |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0x1636 | Renoir | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off |
-| 0x1638 | Renoir / Green Sardine | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off |
-| 0x164C | Cezanne | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off |
-| 0x15E7 | Barcelo | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off |
+| 0x1636 | Renoir | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off (unvalidated) |
+| 0x1638 | Renoir / Green Sardine | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | VCN0 on (`-NRedVDA`) |
+| 0x164C | Cezanne | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off (unvalidated) |
+| 0x15E7 | Barcelo | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off (unvalidated) |
 | 0x15DD | Raven | 1.0-class (`0x0100`) | `ativvaxy_rv.dat` | yes | yes | no | off |
 | 0x15D8 | Raven2 / Picasso | 1.0-class (`0x0100`) | `ativvaxy_rv.dat` | yes | yes | no | off |
 
 The VCN generation is the major/minor IP version; the values match the `ipVersion` argument that `HWLibs`
-currently passes to the firmware loader (`0x0100`/`0x0202`), but Phase 1 only records the data and does not
-load any firmware. The generation-to-family mapping follows the Linux AMD hardware component list
-(Renoir/Cezanne/Barcelo are VCN 2.2; Raven/Picasso are VCN 1.0 and Raven2 is VCN 1.0.1, which share the
-`0x0100` VCN 1.0 family code in `MediaPolicy`).
+currently passes to the firmware loader (`0x0100`/`0x0202`). The generation-to-family mapping follows the
+Linux AMD hardware component list (Renoir/Cezanne/Barcelo are VCN 2.2; Raven/Picasso are VCN 1.0 and
+Raven2 is VCN 1.0.1, which share the `0x0100` VCN 1.0 family code in `MediaPolicy`).
 
 ## Integration points
 
 - `UserPatches::processPatcher()` logs the profile and can disable the rendering fix through
-  `graphics.conditionalDualQuad`.
-- `X5000::wrapSetupAndInitializeHWCapabilities()` reads `hasUVD0/hasVCE/hasVCN0` from the profile instead
-  of hardcoding `false`. The effective values are also gated by `VDA::mediaEnginesEnabled()`, which is
-  `false` unless the user opted in with `-NRedVDA` *and* the engine bring-up reported ready. Since all
-  profiles keep the flags false, current behaviour is unchanged.
+  `graphics.conditionalDualQuad`. `UserPatches` also owns the native page-patch backend that applies the
+  GL table when `-NRedGLFix` is set and the generated VA/AppleGVA tables when `-NRedVDA` is set.
+- `X5000::wrapSetupAndInitializeHWCapabilities()` reads `hasUVD0/hasVCE/hasVCN0` from the profile. The
+  effective values are also gated by `VDA::isRequested()` and `VCNBridge::loadReady()`, so the engine is
+  only advertised when the user opted in, the 0x1638 profile enables it and both 15.8.1 drivers were
+  prepared/loaded. If engine allocation fails, `X5000::allocateHWEngines()` clears the capability again.
 - `VDA::init()` parses the opt-in `-NRedVDA` boot argument (default off), and
   `VDA::processPatcher()` logs the media policy. When `-NRedVDA` is set it also publishes
-  `NRedVDARequested`, `NRedVDAMediaEnabled` and `NRedVCNGeneration` on the iGPU for diagnostics. Phase 1
-  enables no engine, and the default (no boot argument) path only logs under `-NRedDebug`.
-- The VDA work adds the remaining engine bring-up; the rendering fix remains per-pipeline and does not
-  need to know about decode.
+  `NRedVDARequested`, `NRedVDAMediaEnabled` and `NRedVCNGeneration` on the iGPU for diagnostics.
+- `VCNBridge` (new module) force-loads the native `AMDRadeonX6000` VCN2 engine, verifies the generated
+  per-build ABI guards, installs the generated call-site patches, allocates `AMDVCN2HWEngine` into
+  X5000's engine array and bridges the video/shared/SML metaclasses. It is best-effort: any failure
+  disables the bridge and leaves the normal graphics-only accelerator state.
+- The rendering fix remains per-pipeline and does not need to know about decode.
 
 ## Adding a new APU
 
@@ -117,25 +120,29 @@ The current profile table is device-wide; OS-specific patch data still lives in 
 - add the corresponding patch set/signature data;
 - keep media and graphics feature flags independent.
 
-## Hardware decoding (future VDA)
+## Hardware decoding (VDA)
 
-Phase 1 (capability skeleton) is implemented: `MediaPolicy` carries the VCN generation, firmware name,
-ring/fence sizes and H.264/HEVC/AV1 capabilities, the profiles are populated, and `-NRedVDA` exists as an
-opt-in that currently only logs. The remaining VCN path needs, at minimum:
+The Phase 1 capability skeleton and the Phase 2/3 bridge implementation are in place:
 
-- Phase 2: PSP/RLC firmware bring-up and VCN firmware load, with engine status read-back;
-- Phase 3: VCN rings, doorbells and command submission; only then `hasVCN0 = true` for the tested profile;
-- Phase 4: VideoToolbox/VDA capability exposure and surface/format handling.
+- Phase 1: `MediaPolicy` carries the VCN generation, firmware name, ring/fence sizes and H.264/HEVC/AV1
+  capabilities; the profiles are populated; `-NRedVDA` is the opt-in gate.
+- Phase 2/3: `VCNBridge` force-loads the native X6000 VCN2 engine, verifies 15.8.1-generated vtable/getter
+  ABI guards, applies the generated cross-driver call-site patches, allocates `AMDVCN2HWEngine` into the
+  X5000 engine array and exposes `hasVCN0` only for the validated `0x1638` profile behind `-NRedVDA`.
+- Phase 4: the generated 15.8.1 VA/AppleGVA page patches are applied through `UserPatches` when
+  `-NRedVDA` is set.
 
-Those will be implemented as media work behind `MediaPolicy`, so the Chromium fix can remain enabled or
-disabled independently.
+Hardware validation (decode, 64x64 H.264, Hackintool, watchdog/GFXOFF) is still pending; see
+[`VDA-Deployment.md`](VDA-Deployment.md). The Chromium fix remains independent.
 
 ## Current status
 
 - `DeviceProfile` skeleton: implemented.
 - Graphics policy: wired into `UserPatches`; current profiles keep it enabled.
-- Media policy: capability data populated; `X5000` gates the engine flags behind `VDA::mediaEnginesEnabled()`,
-  which stays `false` in Phase 1, so no behaviour change.
-- `-NRedVDA`: parsed and logged, default off, no hardware action.
-- Build: passes (release, debug, releasedbg).
-- Runtime/reboot validation: pending; Phase 1 must be booted once to confirm no graphics regression.
+- Media policy: capability data populated; only `0x1638` enables VCN0 after the bridge prepared both
+  drivers. All other profiles stay disabled until hardware validation.
+- `-NRedVDA`: parsed and logged, default off; with the opt-in it drives `VCNBridge` and the generated
+  VA/AppleGVA user-space patches.
+- Build: passes (release, debug, releasedbg; CommandLineTools toolchain while the default Xcode select is
+  broken on the test machine).
+- Runtime/reboot validation: pending; see [`VDA-Deployment.md`](VDA-Deployment.md).
