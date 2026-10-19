@@ -1079,16 +1079,32 @@ auto UserPatches::buildNativePatches() -> bool
     for (size_t patchIndex = 0; patchIndex < this->nativePatchCount; patchIndex++) {
         const auto& patch = this->nativePatches[patchIndex];
 
-        if (patch.find == nullptr || patch.replace == nullptr || patch.size == 0 || patch.count == 0) { continue; }
-
-        if (patch.size > kMaxPatchSize) {
-            SYSLOG("UserPatch", "Patch %zu is larger than %zu bytes, skipping it", patchIndex, kMaxPatchSize);
-            continue;
+        if (patch.find == nullptr || patch.replace == nullptr || patch.size == 0 || patch.count == 0
+            || patch.page == nullptr || patch.size > kMaxPatchSize || patch.skip > kMaxSitesPerPage
+            || patch.count > kMaxSitesPerPage)
+        {
+            SYSLOG("UserPatch", "Patch %zu is invalid; refusing the native page table", patchIndex);
+            return false;
         }
 
-        if (patch.page == nullptr) {
-            SYSLOG("UserPatch", "Patch %zu has no page image, the native backend cannot apply it", patchIndex);
-            continue;
+        // Locate the complete set of sites before creating a page, so a truncated record can never leave a
+        // partially patched driver behind.
+        size_t offsets[kMaxSitesPerPage]{};
+        size_t matched = 0;
+        size_t placed  = 0;
+        for (size_t offset = 0; offset + patch.size <= kPageSize; offset++) {
+            if (memcmp(patch.page + offset, patch.find, patch.size) != 0) { continue; }
+
+            if (matched++ < patch.skip) { continue; }
+
+            offsets[placed++] = offset;
+            if (placed == patch.count) { break; }
+        }
+
+        if (placed != patch.count) {
+            SYSLOG("UserPatch", "Failed to locate all occurrences of patch %zu (%zu missing); refusing the native page table",
+                   patchIndex, patch.count - placed);
+            return false;
         }
 
         NativePage* page{nullptr};
@@ -1100,8 +1116,9 @@ auto UserPatches::buildNativePatches() -> bool
 
         if (page == nullptr) {
             if (this->nativePageCount >= kMaxNativePages) {
-                SYSLOG("UserPatch", "Too many distinct pages, only the first %zu are used", kMaxNativePages);
-                break;
+                SYSLOG("UserPatch", "Too many distinct pages for the native backend (%zu); refusing the native page table",
+                       kMaxNativePages);
+                return false;
             }
 
             page = &this->nativePages[this->nativePageCount++];
@@ -1109,40 +1126,24 @@ auto UserPatches::buildNativePatches() -> bool
             page->image = patch.page;
         }
 
+        if (page->siteCount + patch.count > kMaxSitesPerPage) {
+            SYSLOG("UserPatch", "Too many patch sites on a single page (%zu + %zu > %zu); refusing the native page table",
+                   page->siteCount, patch.count, kMaxSitesPerPage);
+            return false;
+        }
+
         page->vda = page->vda || this->nativePatchIsVDA[patchIndex];
-
-        auto skip  = patch.skip;
-        auto count = patch.count;
-
-        for (size_t offset = 0; offset + patch.size <= kPageSize; offset++) {
-            if (memcmp(patch.page + offset, patch.find, patch.size) != 0) { continue; }
-
-            if (skip != 0) {
-                skip--;
-                continue;
-            }
-
-            if (page->siteCount >= kMaxSitesPerPage) {
-                SYSLOG("UserPatch", "Too many patch sites on a single page, only the first %zu are used",
-                       kMaxSitesPerPage);
-                break;
-            }
-
+        for (size_t siteIndex = 0; siteIndex < patch.count; siteIndex++) {
             auto& site   = page->sites[page->siteCount++];
-            site.offset  = offset;
+            site.offset  = offsets[siteIndex];
             site.find    = patch.find;
             site.replace = patch.replace;
             site.size    = patch.size;
-
-            if (--count == 0) { break; }
         }
-
-        SYSLOG_COND(count != 0, "UserPatch", "Failed to locate all occurrences of patch %zu (%zu missing)", patchIndex,
-                    count);
     }
 
     if (this->nativePageCount == 0) {
-        SYSLOG("UserPatch", "No usable native page patches, each patch needs a %zu byte page image", kPageSize);
+        SYSLOG("UserPatch", "No usable native page patches, each patch needs a 4096 byte page image and a valid site");
         return false;
     }
 

@@ -157,7 +157,7 @@ if command -v ffmpeg >/dev/null 2>&1; then
     echo
     echo "== hardware encode (VideoProc acceptance) =="
     for encoder in h264_videotoolbox hevc_videotoolbox; do
-        local out="${WORK}/encode-${encoder}.mp4"
+        out="${WORK}/encode-${encoder}.mp4"
         if run_timeout 120 ffmpeg -hide_banner -loglevel error -y -f lavfi \
             -i testsrc2=size=1280x720:rate=30 -t 1 -c:v "${encoder}" -b:v 4M "${out}" >"${WORK}/${encoder}.log" 2>&1 \
             && [[ -s "${out}" ]] && run_timeout 120 ffmpeg -hide_banner -loglevel error -i "${out}" -f null - \

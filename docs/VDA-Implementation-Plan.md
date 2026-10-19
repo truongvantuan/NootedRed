@@ -23,14 +23,15 @@ default-off boot and the wider acceptance matrix (Chromium, DRM, 10-bit, other A
   path clears readiness and keeps the normal graphics-only state; the new code has no panic path. A hang in
   Apple's engine/power path remains the hardware risk and is covered by the staged runbook.
 - Phase 4 (user space): `tools/gen_vda_va_data.py` and `tools/gen_vda_gva_data.py` derive the 15.8.1
-  `AMDRadeonVADriver2` and AppleGVA patches (6 + 1 patch records, 6 page images). `UserPatches` now
+  `AMDRadeonVADriver2` and AppleGVA patches (9 + 1 patch records, 9 page images; the last three VA
+  records are the follow-up encode feedback-stride fixes). `UserPatches` now
   supports multiple patch tables, applies the VA/GVA tables only when `-NRedVDA` is set, the target is
   0x1638 and the kernel VCN bridge has prepared/loaded both drivers, and keeps the GL table behaviour
   unchanged. A failed native engine hardware-init disables the bridge and clears `hasVCN0`.
 - Default behaviour is unchanged: without `-NRedVDA` no VCN engine, capability, property or user-space
   hook is installed by the new code.
 - Builds pass in release, debug and releasedbg (CommandLineTools toolchain on this machine).
-- Hardware/reboot validation is pending; the deployment and rollback steps are in
+- Hardware/reboot validation passed on 2026-10-19; the deployment and rollback steps are in
   [`VDA-Deployment.md`](VDA-Deployment.md).
 
 ### Bring-up log
@@ -176,9 +177,10 @@ call-site data. The runtime ring/submit and watchdog behaviour is hardware-only.
 
 ### Phase 4 — VideoToolbox/VDA exposure — implemented and validated on 0x1638
 
-Status: 15.8.1 VA (6 records / 5 pages) and AppleGVA (1 record / 1 page) patches are generated and
+Status: 15.8.1 VA (9 records / 8 pages) and AppleGVA (1 record / 1 page) patches are generated and
 integrated into `UserPatches`; they are only applied when `-NRedVDA` is set, the profile is `0x1638` and
-the kernel VCN bridge reports ready. End-to-end VideoToolbox selection/decode needs hardware validation.
+the kernel VCN bridge reports ready. End-to-end VideoToolbox selection/decode and hardware encode are
+validated on the target.
 
 - Generate 15.8.1 user-space patches for the AppleGVA decoder-selection path and
   `AMDRadeonVADriver2` (`VAAcceleratorInfo::identify` with per-device `vaFamily=5`, `VAFactory::create*`,

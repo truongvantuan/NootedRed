@@ -36,6 +36,10 @@
 #include <libkern/OSKextLib.h>
 #include <libkern/c++/OSMetaClass.h>
 
+// libkern/version.h declares this with C linkage; including the header conflicts with the version
+// constants already declared by KernelVersion.hpp, so declare only the build string we need.
+extern "C" char osversion[];
+
 static VCNBridge moduleInstance;
 
 namespace
@@ -47,15 +51,17 @@ namespace
     // other VCN 2.2 APUs need their own hardware validation before they are enabled.
     bool isSupportedOS()
     {
-        // All generated data in this tree was derived from macOS 15.8.1 (Darwin 24.6.0).  Do not use it on
-        // another build: the guards would usually reject it, but the force-load and routes would still have
-        // side effects before they do.
-        return currentKernelVersion().major() == 24 && currentKernelVersion().minor() == 6;
+        // All generated data in this tree was derived from macOS 15.8.1 (24H32, Darwin 24.6.0).  Do not
+        // use it on another build: the guards would usually reject it, but the force-load and routes would
+        // still have side effects before they do.
+        return currentKernelVersion().major() == 24 && currentKernelVersion().minor() == 6
+               && strncmp(osversion, "24H32", 5) == 0;
     }
 
     bool isSupportedDevice()
     {
         return isSupportedOS() && NRed::singleton().getDeviceID() == 0x1638
+               && !NRed::singleton().hasExternalVideo()
                && DeviceProfile::current() != nullptr
                && DeviceProfile::current()->media.vcnGeneration == DeviceProfile::kVcn2_2
                && DeviceProfile::current()->media.hasVCN0;
@@ -152,7 +158,7 @@ void VCNBridge::init()
     }
 
     if (!isSupportedOS()) {
-        SYSLOG("VCN", "VCN data is for macOS 15.8.1 (Darwin 24.6); -NRedVDA is ignored on this build");
+        SYSLOG("VCN", "VCN data is for macOS 15.8.1 24H32 (Darwin 24.6); -NRedVDA is ignored on this build");
         this->requested = false;
         return;
     }
