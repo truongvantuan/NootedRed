@@ -145,4 +145,8 @@ Hardware validation (decode, 64x64 H.264, Hackintool, watchdog/GFXOFF) is still 
   VA/AppleGVA user-space patches.
 - Build: passes (release, debug, releasedbg; CommandLineTools toolchain while the default Xcode select is
   broken on the test machine).
-- Runtime/reboot validation: pending; see [`VDA-Deployment.md`](VDA-Deployment.md).
+- Runtime/reboot validation: **hardware decode passed** on macOS 15.8.1 / Renoir `0x1638`: ABI guards,
+  native X6000 load, engine allocation, VCN initHardware and VA/AppleGVA user-space patches all succeeded;
+  H.264 and HEVC decode matched software output. See
+  [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md).
+- Follow-ups: default-off boot on this build, Chromium/real-app playback, DRM/10-bit, other APUs.

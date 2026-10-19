@@ -111,7 +111,21 @@ adverse case from the community fork). Watch for:
 - `Kernel_*.gpuRestart` reports;
 - system network/audio panics (reported by the fork for Apple TV DRM).
 
-## 7. Failure handling / rollback
+## 7. Validated results (2026-10-19)
+
+The target passed the first real-hardware run:
+
+- `NRedVCNStage=11`, both ABI guards `=1`, X6000 native load ready, engine allocated, VCN
+  `initHardware=1`, `NRedVCNUserApplied=4`;
+- H.264 720p, 64x64 H.264 and HEVC 720p VideoToolbox decodes matched the software output;
+- 5 repeated 1080p H.264 + 5 repeated 1080p HEVC decodes matched and produced no `.gpuRestart`;
+- ffmpeg exposes `videotoolbox_vld` for H.264; AppleGVA logs for HEVC show
+  `useHighPerformanceDecode = 1` and disposed physical/virtual accelerators.
+
+Remaining acceptance: default-off boot of this build, Chromium/real-app playback, DRM/Apple TV, 10-bit HEVC,
+long-duration playback, Hackintool create/destroy and other APUs.
+
+## 8. Failure handling / rollback
 
 1. Boot the backup EFI (or add `-NRedOff` to boot-args) so NootedRed does not load.
 2. Remove `-NRedVDA` from the OpenCore config/NVRAM.

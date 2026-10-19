@@ -5,8 +5,9 @@ layer from `feature/device-profile`.
 
 ## Current state
 
-Implementation is complete on the 15.8.1 / Renoir `0x1638` target; hardware validation is the only
-remaining step (see [`VDA-Deployment.md`](VDA-Deployment.md)).
+Implementation is complete and **hardware-validated on 15.8.1 / Renoir `0x1638`** (2026-10-19). Evidence:
+[`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md). The final
+default-off boot and the wider acceptance matrix (Chromium, DRM, 10-bit, other APUs) remain follow-ups.
 
 - Phase 1 (capability skeleton): `DeviceProfile::MediaPolicy` carries `vcnGeneration`
   (`0x0100`/`0x0202`), `vcnFirmware` (`ativvaxy_rv.dat`/`ativvaxy_nv.dat`), ring/fence sizes and
@@ -46,11 +47,12 @@ remaining step (see [`VDA-Deployment.md`](VDA-Deployment.md)).
   returned. The guard `kextRadeonX6000.loadIndex != Unloaded` was wrong: Lilu's `loadKinfo()` assigns a
   load index when the KextInfo is registered at patcher load, even if the kext is not running. The guard was
   removed; preloaded X6000 is now handled solely by the `loadAttempted` gate in the X6000 branch.
-- The loadIndex-fixed build (`457d02f6…`) is deployed to the ESP; `-NRedVDA` is in the OpenCore boot-args.
-  It also publishes `NRedVCNStage` (2 X5000 seen, 3 ABI, 4 prepared, 5 start seen, 6 load requested,
-  7 X6000 seen, 8 X6000 ABI, 9 engine allocated, 10 accelerator started, 11 init OK, 12 init failed) and
-  `NRedVCNReject` so a failed boot can be diagnosed from ioreg alone. The next reboot should show the
-  `...Seen`/`ABIValidated` markers and progress the stage; hardware decode validation follows.
+- The loadIndex-fixed build (`457d02f6…`) was deployed to the ESP. Third boot (2026-10-19 19:38):
+  `NRedVCNStage=11`, `NRedVCNX5000ABIValidated=1`, `NRedVCNX6000ABIValidated=1`,
+  `NRedVCNNativeLoadReady=1`, `NRedVCNEngineAllocated=1`, `NRedVCNLastHardwareInit=1`,
+  `NRedVCNUserApplied=4`; H.264 720p/64x64 and HEVC 720p/1080p decode with VideoToolbox matched the
+  software YUV output byte-for-byte. Hardware decode is working on the target. Evidence and caveats:
+  [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md).
 
 ## Prior art and chosen direction
 
@@ -128,7 +130,7 @@ would replace that with a `RuntimeMC`/native reimplementation.
   time, so the graphics path is untouched. One boot on a target machine is still required to confirm no
   runtime regression (`-NRedVDA` absent and present).
 
-### Phase 2 — firmware / PSP bring-up and 15.8.1 data — implemented, hardware readback pending
+### Phase 2 — firmware / PSP bring-up and 15.8.1 data — implemented and validated
 
 Status: `tools/gen_vcn_kernel_data.py` + `VCNKernelData.hpp` are generated from the live 15.8.1 KC and
 self-checked; the X6000 optional load is wired in `VCNBridge`. Firmware read-back and the actual X6000
@@ -150,7 +152,7 @@ load can only be confirmed on the next boot.
   spoof) is exercised only when the engine is used; add read-back diagnostics.
 - Keep media disabled if any load/ABI/firmware step fails; no user-visible decode in Phase 2.
 
-### Phase 3 — VCN engine insertion and ring/submit validation — implemented, hardware validation pending
+### Phase 3 — VCN engine insertion and ring/submit validation — implemented and validated on 0x1638
 
 Status: `VCNBridge` allocates `AMDVCN2HWEngine` into the X5000 engine array and gates `hasVCN0` on both
 drivers being prepared/loaded plus a successful allocation; GFXOFF wait pairing is part of the generated
@@ -169,7 +171,7 @@ call-site data. The runtime ring/submit and watchdog behaviour is hardware-only.
   failure must leave the graphics-only accelerator state and fall back to software decode, never panic.
 - Add diagnostics to the media log tag (`VDA`).
 
-### Phase 4 — VideoToolbox/VDA exposure — implemented, hardware validation pending
+### Phase 4 — VideoToolbox/VDA exposure — implemented and validated on 0x1638
 
 Status: 15.8.1 VA (6 records / 5 pages) and AppleGVA (1 record / 1 page) patches are generated and
 integrated into `UserPatches`; they are only applied when `-NRedVDA` is set, the profile is `0x1638` and
@@ -244,8 +246,9 @@ When starting a new session:
    `xmake f -m release -y && xmake -y` (and debug/releasedbg before handing off);
 4. The recorded decision is **Option A** (native X6000 engine bridge), implemented in `VCNBridge`; do not
    switch to Option B without a new decision;
-5. Phases 1-4 are implemented for macOS 15.8.1 / Renoir `0x1638`. The remaining work is hardware validation:
-   follow [`VDA-Deployment.md`](VDA-Deployment.md) to install the kext, boot once without and once with
-   `-NRedVDA`, run `tools/vda_selftest.sh`, then the decode/Hackintool/GFXOFF tests. If the OS or AMD
-   drivers change, regenerate `VCNKernelData.hpp`, `VDAVAData.hpp` and `VDAGVAData.hpp`; never reuse this
-   data across builds. The development machine is a Renoir `0x1638` on macOS 15.8.1 (Darwin 24.6).
+5. Phases 1-4 are implemented and hardware-validated on macOS 15.8.1 / Renoir `0x1638`. The next steps are
+   the wider acceptance matrix: boot once with `-NRedVDA` removed to confirm the default-off path on this
+   build, then Chromium/real-application playback, DRM/Apple TV, 10-bit HEVC, longer playback/desktop
+   responsiveness and Hackintool create/destroy. If the OS or AMD drivers change, regenerate
+   `VCNKernelData.hpp`, `VDAVAData.hpp` and `VDAGVAData.hpp`; never reuse this data across builds. The
+   development machine is a Renoir `0x1638` on macOS 15.8.1 (Darwin 24.6).

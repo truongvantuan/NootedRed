@@ -106,6 +106,11 @@ else
         else
             warn "${name}: no VideoToolbox mention in the decode log"
         fi
+        if grep -q "videotoolbox_vld" "${log}"; then
+            pass "${name}: decoder negotiated the VideoToolbox hardware pixel format"
+        else
+            warn "${name}: no videotoolbox_vld pixel format in the decode log"
+        fi
         if cmp -s "${soft}" "${hard}"; then
             pass "${name}: hardware output matches software decoding"
         else
@@ -133,16 +138,51 @@ else
 fi
 
 echo
+echo "== post-decode VDA markers =="
+ioreg -l -w0 -r -n IGPU 2>/dev/null | grep -oE '"NRed[A-Za-z0-9]+"[[:space:]]*=[[:space:]]*[0-9]+' | sort -u >"${WORK}/markers-after.txt" || true
+cat "${WORK}/markers-after.txt" 2>/dev/null || true
+if grep -qE '"NRedVCNLastHardwareInit"[[:space:]]*=[[:space:]]*1' "${WORK}/markers-after.txt"; then
+    pass "VCN initHardware succeeded at least once after decoding"
+else
+    fail "NRedVCNLastHardwareInit is not 1 after decoding (hardware engine was not initialised)"
+fi
+if grep -qE '"NRedVCNUserApplied"[[:space:]]*=[[:space:]]*[1-9]' "${WORK}/markers-after.txt"; then
+    pass "VDA user-space pages were patched after decoding"
+else
+    warn "NRedVCNUserApplied did not increase after decoding"
+fi
+
+if command -v ffmpeg >/dev/null 2>&1; then
+    log show --last 5m --style compact --info --debug \
+        --predicate 'process == "VTDecoderXPCService"' 2>/dev/null \
+        | grep -iE 'AppleGVA|useHighPerformanceDecode|physical accelerator' | tail -n 12 \
+        >"${WORK}/vtdecoder.log" || true
+    if grep -qiE 'AppleGVA|useHighPerformanceDecode|physical accelerator' "${WORK}/vtdecoder.log"; then
+        pass "VTDecoderXPCService log shows the AppleGVA hardware decoder path"
+    else
+        warn "no AppleGVA hardware-decoder evidence in the VTDecoderXPCService log"
+    fi
+fi
+
+echo
 echo "== GPU reset / watchdog reports (current boot) =="
 log show --last boot --style compact \
-    --predicate 'eventMessage CONTAINS[c] "gpuRestart"' 2>/dev/null \
+    --predicate 'eventMessage CONTAINS[c] "gpuRestart" AND process != "log"' 2>/dev/null \
     | tail -n 20 | tee "${WORK}/gpu-resets.log" || true
-ls -1t /Library/Logs/DiagnosticReports/*gpuRestart* 2>/dev/null | head -n 5 >>"${WORK}/gpu-resets.log" || true
-if grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "${WORK}/gpu-resets.log" 2>/dev/null \
-    || ls /Library/Logs/DiagnosticReports/*gpuRestart* >/dev/null 2>&1; then
-    warn "GPU reset/watchdog reports exist; review ${WORK}/gpu-resets.log"
+BOOT_SEC="$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^\{ sec = ([0-9]+),.*/\1/p')"
+NEW_REPORTS=0
+for report in /Library/Logs/DiagnosticReports/*gpuRestart*; do
+    [[ -e "${report}" ]] || continue
+    mtime="$(stat -f %m "${report}" 2>/dev/null || echo 0)"
+    if [[ -n "${BOOT_SEC}" && "${mtime}" -ge "${BOOT_SEC}" ]]; then
+        echo "${report}" >>"${WORK}/gpu-resets.log"
+        NEW_REPORTS=1
+    fi
+done
+if grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "${WORK}/gpu-resets.log" 2>/dev/null || [[ ${NEW_REPORTS} -eq 1 ]]; then
+    warn "GPU reset/watchdog reports exist for this boot; review ${WORK}/gpu-resets.log"
 else
-    pass "no GPU reset/watchdog reports in the selected query"
+    pass "no GPU reset/watchdog reports for this boot"
 fi
 
 echo
