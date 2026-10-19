@@ -37,6 +37,7 @@
 #include <PenguinWizardry/PatcherPlus.hpp>
 #include <X5000.hpp>
 #include <DeviceProfile.hpp>
+#include <VDA.hpp>
 #include <libkern/OSTypes.h>
 #include <libkern/c++/OSObject.h>
 #include <mach/i386/vm_param.h>
@@ -349,13 +350,19 @@ void X5000::wrapSetupAndInitializeHWCapabilities(void* const self)
 
     const auto* const profile = DeviceProfile::current();
 
+    // Media engines stay off unless the user opted in with -NRedVDA and the corresponding bring-up exists.
+    // `VDA::mediaEnginesEnabled()` is the runtime gate; the profile remains the single capability switch.
+    const auto mediaEnabled = VDA::singleton().mediaEnginesEnabled();
+
     singleton().supportedDisplayCountField(self) = 4;
-    singleton().hasUVD0Field(self)               = profile != nullptr && profile->media.hasUVD0;
-    singleton().hasVCEField(self)                = profile != nullptr && profile->media.hasVCE;
-    singleton().hasVCN0Field(self)               = profile != nullptr && profile->media.hasVCN0;
+    singleton().hasUVD0Field(self)               = mediaEnabled && profile != nullptr && profile->media.hasUVD0;
+    singleton().hasVCEField(self)                = mediaEnabled && profile != nullptr && profile->media.hasVCE;
+    singleton().hasVCN0Field(self)               = mediaEnabled && profile != nullptr && profile->media.hasVCN0;
     singleton().hasSDMAPagingQueueField(self)    = false;
     singleton().hasGetAllClockLimitsField(self)  = false;
     if (currentKernelVersion() >= MACOS_10_15) { singleton().dccDisplayableSupportField(self) = true; }
+
+    if (mediaEnabled) { DBGLOG("X5000", "Media engines enabled from the device profile"); }
 }
 
 // TODO: Investigate why this is needed.

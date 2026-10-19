@@ -46,6 +46,7 @@
 #include <Regs/NBIO.hpp>
 #include <Regs/SMU.hpp>
 #include <UserPatches.hpp>
+#include <VDA.hpp>
 #include <X5000.hpp>
 #include <X6000FB.hpp>
 #include <kern/clock.h>
@@ -68,6 +69,8 @@ void NRed::init()
     Backlight::singleton().init();
 
     UserPatches::singleton().init();
+
+    VDA::singleton().init();
 
     lilu.onKextLoadForce(&kextRadeonX6000Framebuffer);
     lilu.onKextLoadForce(&kextRadeonX5000HWLibs);
@@ -201,6 +204,8 @@ void NRed::processPatcher()
         WIOKit::renameDevice(device, name);
         WIOKit::awaitPublishing(device);
     }
+
+    VDA::singleton().processPatcher();
 
     DeviceInfo::deleter(devInfo);
 }
