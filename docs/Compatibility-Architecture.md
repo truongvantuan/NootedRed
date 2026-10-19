@@ -32,7 +32,7 @@ The goal is one kext binary and one data model that:
 | Site location | exact 4 KiB page image + `find`/`replace` | `SignaturePatch` (32 B masked context), ported into `master` as an opt-in fallback | per-build snapshots; resolver is a smaller snapshot |
 | Hardware model | `DeviceProfile` (device ID key, media all false) | VDA branch adds VCN generation/firmware/ring fields | version range unused; media fields unreachable |
 | VCN data | none | `VCNKernelData.hpp`, `VDAVAData.hpp`, `VDAGVAData.hpp`, generators with `--check` | all data pinned to 15.8.1 / `0x1638` |
-| Data collection | `platform-data/`, `tools/collect_platform_data.py`, importer | — | captures binaries but no generated consumer; `kexts.json` has `binary: null` |
+| Data collection | `platform-data/`, `tools/collect_compat_data.py`, importer | — | older datasets predate the focused collector; see [collector](../tools/README-collect-compat-data.md) |
 | Media capability | personality advertises `IOGVACodec=AMDVCN2` unconditionally | `hasVCN0` from profile, all false | advertisement and kernel capability have different sources |
 
 This section records the state before the branch integration described in §8. After that integration,
@@ -269,7 +269,7 @@ with codec capabilities matching the VCN generation.
 Target state:
 
 ```
-collect_platform_data.py  ->  platform-data/<dataset>/
+collect_compat_data.py   ->  <dataset>/ (Chromium sites, VDA headers, metadata)
         |
         v
 build_compat_manifest.py  ->  compat/compat-manifest.json   (git tracked, deterministic, diffable)
@@ -421,5 +421,5 @@ validated matrix; VCN1 either works on hardware or is explicitly unavailable.
 - [`analysis/patch-resolver.md`](../analysis/patch-resolver.md)
 - [VDA implementation plan](VDA-Implementation-Plan.md) and
   [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md)
-- [Platform data collector](../tools/README-collect-platform-data.md)
+- [Compatibility data collector](../tools/README-collect-compat-data.md)
 - [Platform data index](Platform-Data-Index.md)
