@@ -161,7 +161,8 @@ Add the generated arrays and tables to `NootedRed/UserPatches.cpp`, then add the
 ```sh
 xmake f -m release -y
 xmake -y
-python3 tools/test_patchset_selection.py
+python3 tools/test_patchset_selection.py   # version/APU selection table
+python3 tools/test_patch_data.py           # page images, find/replace and resolver signature consistency
 ```
 
 Then install the kext, reboot, and check:
@@ -177,7 +178,8 @@ Then install the kext, reboot, and check:
 2. Map device IDs/attributes in `UserPatches::currentApuMask()`.
 3. Add or update a `PatchSet` entry for that family. If the page data is shared, reuse the existing
    tables; if not, generate a family-specific set.
-4. Add cases to `tools/test_patchset_selection.py`.
+4. Add cases to `tools/test_patchset_selection.py` and, if the APU needs its own patch data, make sure
+   `tools/test_patch_data.py` still passes.
 5. Test on the real hardware. A code-level mask is not a claim of hardware validation.
 
 Base Raven is special: `NRed` intentionally leaves `Attributes` empty for `0x15DD`, so
