@@ -163,6 +163,16 @@ Enabling user-space GL driver patches (experimental)
 Patched ... site(s) ...
 ```
 
+当前 `master` 还会打印兼容性诊断（`-NRedGLFix` 开启时）：
+
+```text
+Compat: profile="Renoir/Green Sardine" family="Green Sardine" level=experimental device=0x1638 ...
+Compat: target identity: kind=GLDriver uuid=<32 位十六进制> path=/System/Library/Extensions/AMDRadeonX5000GLDriver.bundle/...
+```
+
+`target identity` 里的 UUID 是驱动二进制的 `LC_UUID`，用来判断这份补丁数据是否属于当前驱动构建；
+多版本/多 APU 的选择将以它为主键（见 [兼容架构](Compatibility-Architecture.md)）。
+
 如果没有任何 `UserPatch` 日志，先检查 boot-args 和 kext 是否加载。
 
 ### 3. 实际应用
