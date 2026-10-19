@@ -53,3 +53,15 @@ project.
 2. Add a DeviceProfile entry if the APU is new.
 3. Locate the GL/MTL patch sites for that build; generate a PatchSet/signatures.
 4. Build, install, reboot, and verify on that machine.
+
+## Importing a dataset
+
+Use the importer to verify the archive and normalize its metadata into the local dataset archive:
+
+```sh
+python3 tools/import_platform_data.py NootedRed-platform-data.zip
+```
+
+It writes `platform-data/<date>_<os>_<build>_<cpu>_<device>/` with the archive, `SHA256`,
+`dataset.json`, extracted metadata and driver images. `platform-data/` is gitignored because it
+contains Apple binaries and hardware identifiers.
