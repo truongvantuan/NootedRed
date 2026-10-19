@@ -27,6 +27,7 @@
 #include <DeviceProfile.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserPatches.hpp>
+#include <NRed.hpp>
 #include <libkern/OSTypes.h>
 #include <mach/i386/vm_types.h>
 
@@ -880,6 +881,28 @@ static const UInt8 kGLDriverDualQuadPage[] = {
     };
     constexpr size_t kGLDriverPatchCount = arrsize(kGLDriverPatches);
 
+    // Version/family-aware patch sets.  Add one entry per validated macOS build; the exact page images
+    // still gate every site, so a set from another build can never modify a mismatched driver page.
+    // `15.8.1` is Darwin 24.6.0 (macOS 15.8.1, build 24H32).
+    static const UserPatches::PatchSet kGLDriverPatchSets[] = {
+        // Family-specific entries first: all current gfx9 APUs share the same page data, but keeping
+        // them separate lets a future family diverge without changing the selection code.
+        {"15.8.1 / Renoir-family", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
+         static_cast<UserPatches::ApuMask>(UserPatches::kApuRenoir | UserPatches::kApuRenoirE |
+                                           UserPatches::kApuGreenSardine),
+         kGLDriverPatches, kGLDriverPatchCount},
+        {"15.8.1 / Raven-family", PenguinWizardry::KernelVersion(24, 6), PenguinWizardry::KernelVersion(24, 6),
+         static_cast<UserPatches::ApuMask>(UserPatches::kApuRaven | UserPatches::kApuRaven2 |
+                                           UserPatches::kApuPicasso),
+         kGLDriverPatches, kGLDriverPatchCount},
+        // Generic fallback for the case where APU attributes are not populated yet.  It is deliberately
+        // last so a known family always wins.
+        {"15.8.1 / gfx9 APU fallback", PenguinWizardry::KernelVersion(24, 6),
+         PenguinWizardry::KernelVersion(24, 6), UserPatches::kApuAll, kGLDriverPatches,
+         kGLDriverPatchCount},
+    };
+    constexpr size_t kGLDriverPatchSetCount = sizeof(kGLDriverPatchSets) / sizeof(kGLDriverPatchSets[0]);
+
 }    // namespace
 
 UserPatches& UserPatches::singleton() { return moduleInstance; }
@@ -887,9 +910,9 @@ UserPatches& UserPatches::singleton() { return moduleInstance; }
 void UserPatches::init()
 {
     // `registerGLDriverFix` may already have been called; do not overwrite a custom table then.
-    if (this->patches == nullptr && this->patchCount == 0) {
-        this->patches    = kGLDriverPatches;
-        this->patchCount = kGLDriverPatchCount;
+    if (this->patches == nullptr && this->patchCount == 0 && this->patchSets == nullptr) {
+        this->patchSets     = kGLDriverPatchSets;
+        this->patchSetCount = kGLDriverPatchSetCount;
     }
 
     this->enabled = kGLFixDefaultEnabled;
@@ -913,6 +936,69 @@ void UserPatches::registerGLDriverFix(const PagePatch* const patchTable, const s
 {
     this->patches    = patchTable;
     this->patchCount = count;
+    this->patchSets  = nullptr;
+    this->patchSetCount = 0;
+}
+
+void UserPatches::registerPatchSets(const PatchSet* const sets, const size_t count)
+{
+    this->patchSets     = sets;
+    this->patchSetCount = count;
+    this->patches       = nullptr;
+    this->patchCount    = 0;
+}
+
+auto UserPatches::currentApuMask() const -> ApuMask
+{
+    const auto& attributes = NRed::singleton().getAttributes();
+
+    UInt8 mask = 0;
+    if (attributes.isRaven2()) { mask |= kApuRaven2; }
+    if (attributes.isPicasso()) { mask |= kApuPicasso; }
+    if (attributes.isRenoir()) { mask |= kApuRenoir; }
+    if (attributes.isRenoirE()) { mask |= kApuRenoirE; }
+    if (attributes.isGreenSardine()) { mask |= kApuGreenSardine; }
+
+    // NRed leaves the attributes empty for the base Raven (0x15DD); model that explicitly.  A zero
+    // device ID means NRed has not populated its device information yet, so return an unknown mask and
+    // let the selector use the generic fallback rather than guessing a family.
+    if (mask == 0) {
+        if (NRed::singleton().getDeviceID() == 0x15DD) { mask = kApuRaven; }
+        else if (NRed::singleton().getDeviceID() == 0) { return static_cast<ApuMask>(0); }
+    }
+
+    return static_cast<ApuMask>(mask);
+}
+
+void UserPatches::selectPatchSet()
+{
+    if (this->patches != nullptr || this->patchCount != 0) { return; }
+    if (this->patchSets == nullptr || this->patchSetCount == 0) { return; }
+
+    const auto version = currentKernelVersion();
+    const auto apus    = static_cast<UInt8>(this->currentApuMask());
+
+    for (size_t index = 0; index < this->patchSetCount; index++) {
+        const auto& set = this->patchSets[index];
+        if (version < set.minVersion || version > set.maxVersion) { continue; }
+
+        // An unknown APU (zero mask) may only use the generic fallback, never a family-specific set.
+        if (apus == 0) {
+            if (set.apus != UserPatches::kApuAll) { continue; }
+        }
+        else if ((static_cast<UInt8>(set.apus) & apus) == 0) {
+            continue;
+        }
+
+        this->patches    = set.patches;
+        this->patchCount = set.count;
+        SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
+               version.major(), version.minor(), apus);
+        return;
+    }
+
+    SYSLOG("UserPatch", "No patch set matches macOS %u.%u / APU mask 0x%02X; not installing any user patches",
+           version.major(), version.minor(), apus);
 }
 
 void UserPatches::processPatcher(KernelPatcher& patcher)
@@ -926,6 +1012,8 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
             return;
         }
     }
+
+    this->selectPatchSet();
 
     if (this->patches == nullptr || this->patchCount == 0) {
         SYSLOG("UserPatch", "No user-space GL driver patches are configured, not installing any hooks");

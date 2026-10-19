@@ -22,6 +22,7 @@
 
 #pragma once
 #include <Headers/kern_patcher.hpp>
+#include <PenguinWizardry/KernelVersion.hpp>
 #include <Headers/kern_user.hpp>
 #include <libkern/OSTypes.h>
 
@@ -44,6 +45,34 @@
 class UserPatches
 {
 public:
+    // APU families this module can target.  A patch set may be limited to a subset; `kApuAll` is used by
+    // the shared page-image patches, which are safe for every supported gfx9 APU (the exact page image
+    // still gates them, so an unsupported APU is a no-op).
+    enum ApuMask : UInt8 {
+        kApuRaven        = 1U << 0,
+        kApuRaven2       = 1U << 1,
+        kApuPicasso      = 1U << 2,
+        kApuRenoir       = 1U << 3,
+        kApuRenoirE      = 1U << 4,
+        kApuGreenSardine = 1U << 5,
+        kApuAll          = 0x3F,
+    };
+
+    struct PagePatch;
+
+    // A patch set valid for a macOS version range and an APU-family subset.  The first matching set is
+    // selected once per boot; page images remain the last line of defence, so a set whose images do not
+    // match the running driver simply does nothing.
+    struct PatchSet
+    {
+        const char*                     name;
+        PenguinWizardry::KernelVersion  minVersion;
+        PenguinWizardry::KernelVersion  maxVersion;
+        ApuMask                         apus;
+        const PagePatch*                patches;
+        size_t                          count;
+    };
+
     // Lookup-style patch for one user-space Mach-O image.
     struct PagePatch
     {
@@ -86,13 +115,19 @@ public:
     // after `init`, as long as both happen from `NRed::init`.
     void registerGLDriverFix(const PagePatch* patchTable, size_t count);
 
+    // Replaces the built-in version/family-aware patch-set table.  `sets` has to point to static storage.
+    // May be called before or after `init`, as long as both happen from `NRed::init`.
+    void registerPatchSets(const PatchSet* sets, size_t count);
+
 private:
     // Longest supported replacement, in bytes.
     static constexpr size_t kMaxPatchSize = 32;
 
-    // Amount of distinct pages and per-page sites the native backend supports.
-    static constexpr size_t kMaxNativePages  = 4;
-    static constexpr size_t kMaxSitesPerPage = 4;
+    // Amount of distinct pages and per-page sites the native backend supports.  A single selected patch
+    // set is used per boot, so this only needs to cover that set; the limit is raised for future
+    // multi-page/multi-site patch sets.
+    static constexpr size_t kMaxNativePages  = 16;
+    static constexpr size_t kMaxSitesPerPage = 8;
 
     // Amount of patches handed over to Lilu's user patcher.
     static constexpr size_t kMaxLiluPatches = 8;
@@ -112,9 +147,15 @@ private:
         size_t       siteCount{0};
     };
 
+    const PatchSet* patchSets{nullptr};
+    size_t          patchSetCount{0};
+
     const PagePatch* patches{nullptr};
     size_t           patchCount{0};
     bool             enabled{false};
+
+    void selectPatchSet();
+    auto currentApuMask() const -> ApuMask;
 
     NativePage nativePages[kMaxNativePages]{};
     size_t     nativePageCount{0};
