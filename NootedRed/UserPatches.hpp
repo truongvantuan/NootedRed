@@ -122,6 +122,7 @@ private:
     struct NativePage
     {
         const UInt8* image{nullptr};
+        UInt64       head{0};
         NativeSite   sites[kMaxSitesPerPage]{};
         size_t       siteCount{0};
         bool         vda{false};
@@ -147,7 +148,7 @@ private:
 
     NativePage nativePages[kMaxNativePages]{};
     size_t     nativePageCount{0};
-    UInt32     vdaAppliedCount{0};
+    SInt32     vdaAppliedCount{0};
 
     UserPatcher::BinaryModPatch liluPatches[kMaxLiluPatches]{};
     UserPatcher::BinaryModInfo  liluModInfo{};

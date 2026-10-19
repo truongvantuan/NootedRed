@@ -28,6 +28,7 @@
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserPatches.hpp>
 #include <VCNBridge.hpp>
+#include <libkern/OSAtomic.h>
 #include <libkern/OSTypes.h>
 #include <mach/i386/vm_types.h>
 
@@ -948,7 +949,7 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
     // Build the native page list from whichever tables are enabled.  The VDA tables only exist on macOS 11
     // and newer, where the native backend is the one being used, and only for the validated 0x1638 profile.
     const auto vdaAllowed = this->vdaEnabled && profile != nullptr && profile->deviceID == 0x1638
-                            && profile->media.hasVCN0;
+                            && profile->media.hasVCN0 && !NRed::singleton().hasExternalVideo();
     if (this->vdaEnabled && !vdaAllowed) {
         SYSLOG("UserPatch", "VDA patches requested but this profile is not the validated 0x1638 target");
     }
@@ -1124,6 +1125,7 @@ auto UserPatches::buildNativePatches() -> bool
             page = &this->nativePages[this->nativePageCount++];
             *page = NativePage{};
             page->image = patch.page;
+            memcpy(&page->head, patch.page, sizeof(page->head));
         }
 
         if (page->siteCount + patch.count > kMaxSitesPerPage) {
@@ -1157,7 +1159,11 @@ void UserPatches::patchNativePage(const void* const data)
     for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
         const auto& page = this->nativePages[pageIndex];
 
-        if (memcmp(page.image, data, kPageSize) != 0) { continue; }
+        // Cheap first-word fingerprint before the full 4 KiB compare: the validation hook runs for every
+        // code-signed page, so avoid 12 full-page memcmps for every page.
+        UInt64 head{0};
+        memcpy(&head, data, sizeof(head));
+        if (head != page.head || memcmp(page.image, data, kPageSize) != 0) { continue; }
 
         // VDA patches are only applied when the VCN bridge actually prepared both drivers and loaded X6000.
         // If it failed (ABI mismatch, X6000 load failure), the stock VA/GVA driver stays in place and decode
@@ -1193,8 +1199,8 @@ void UserPatches::patchNativePage(const void* const data)
         DBGLOG("UserPatch", "Patched %zu site(s) in a user-space driver page", page.siteCount);
 
         if (page.vda) {
-            this->vdaAppliedCount++;
-            NRed::singleton().setProp32("NRedVCNUserApplied", this->vdaAppliedCount);
+            const auto applied = static_cast<UInt32>(OSIncrementAtomic(&this->vdaAppliedCount) + 1);
+            NRed::singleton().setProp32("NRedVCNUserApplied", applied);
         }
 
         return;

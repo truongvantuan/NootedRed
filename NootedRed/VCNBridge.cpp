@@ -33,6 +33,7 @@
 #include <VDA.hpp>
 #include <X5000.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
+#include <libkern/OSAtomic.h>
 #include <libkern/OSKextLib.h>
 #include <libkern/c++/OSMetaClass.h>
 
@@ -60,11 +61,10 @@ namespace
 
     bool isSupportedDevice()
     {
+        const auto* const profile = DeviceProfile::current();
         return isSupportedOS() && NRed::singleton().getDeviceID() == 0x1638
-               && !NRed::singleton().hasExternalVideo()
-               && DeviceProfile::current() != nullptr
-               && DeviceProfile::current()->media.vcnGeneration == DeviceProfile::kVcn2_2
-               && DeviceProfile::current()->media.hasVCN0;
+               && !NRed::singleton().hasExternalVideo() && profile != nullptr
+               && profile->media.vcnGeneration == DeviceProfile::kVcn2_2 && profile->media.hasVCN0;
     }
 
     // Boot diagnostics: the iGPU is guaranteed to exist once the device ID is known, so properties can be
@@ -72,10 +72,16 @@ namespace
     // reason, which makes a failed boot diagnosable from ioreg without the unified log.
     void publishStage(const UInt32 stage)
     {
-        static UInt32 lastStage{0};
-        if (stage <= lastStage || NRed::singleton().getDeviceID() == 0) { return; }
+        static volatile SInt32 lastStage{0};
+        if (NRed::singleton().getDeviceID() == 0) { return; }
 
-        lastStage = stage;
+        // The kext-load/start callbacks can run on different threads; publish only a monotonic maximum.
+        SInt32 current;
+        do {
+            current = lastStage;
+            if (stage <= static_cast<UInt32>(current)) { return; }
+        } while (!OSCompareAndSwap(current, static_cast<SInt32>(stage), &lastStage));
+
         NRed::singleton().setProp32("NRedVCNStage", stage);
     }
 
@@ -91,10 +97,9 @@ namespace
                  const mach_vm_address_t slide, const size_t size)
     {
         target = reinterpret_cast<T>(patcher.solveSymbol(id, name, slide, size));
-        patcher.clearError();
-
         if (target) { return true; }
 
+        patcher.clearError();
         SYSLOG("VCN", "missing symbol: %s", name);
         return false;
     }
@@ -241,7 +246,6 @@ bool VCNBridge::acceleratorStart(void* const self, IOService* const provider)
     }
 
     const auto result = FunctionCast(acceleratorStart, bridge.orgAcceleratorStart)(self, provider);
-    bridge.acceleratorStarted = result;
     if (result) { publishStage(10); }
     NRed::singleton().setProp32("NRedVCNAcceleratorStarted", static_cast<UInt32>(result));
     if (!result) {
@@ -249,10 +253,27 @@ bool VCNBridge::acceleratorStart(void* const self, IOService* const provider)
         bridge.engineAllocated = false;
         NRed::singleton().setProp32("NRedVCNEngineAllocated", 0);
         NRed::singleton().setProp32("NRedVDAMediaEnabled", 0);
-        if (bridge.hardwareHandle != nullptr) { X5000::singleton().setVCN0Capability(bridge.hardwareHandle, false); }
+        if (bridge.hardwareHandle != nullptr) {
+            X5000::singleton().setVCN0Capability(bridge.hardwareHandle, false);
+            bridge.hardwareHandle = nullptr;
+        }
     }
 
     return result;
+}
+
+void VCNBridge::acceleratorStop(void* const self, IOService* const provider)
+{
+    auto& bridge = singleton();
+    FunctionCast(acceleratorStop, bridge.orgAcceleratorStop)(self, provider);
+
+    // The accelerator is going away; drop all engine/accelerator state without touching the hardware
+    // object.  The prepared X5000/X6000 symbols stay valid for a possible restart, and a new start will
+    // allocate a fresh engine.
+    bridge.engineAllocated = false;
+    bridge.hardwareHandle  = nullptr;
+    NRed::singleton().setProp32("NRedVCNEngineAllocated", 0);
+    NRed::singleton().setProp32("NRedVDAMediaEnabled", 0);
 }
 
 void* VCNBridge::newShared()
@@ -398,6 +419,8 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
         publishStage(3);
 
         auto ok = true;
+        ok &= resolve(patcher, id, "__ZN37AMDRadeonX5000_AMDGraphicsAccelerator4stopEP9IOService",
+                      this->orgAcceleratorStop, slide, size);
         ok &= resolve(patcher, id, "__ZN37AMDRadeonX5000_AMDGraphicsAccelerator9newSharedEv", this->orgNewShared,
                       slide, size);
         ok &= resolve(patcher, id, "__ZN37AMDRadeonX5000_AMDGraphicsAccelerator19newSharedUserClientEv",
@@ -429,6 +452,7 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
             "__ZN29AMDRadeonX5000_AMDAccelShared10gMetaClassE",
             "__ZN39AMDRadeonX5000_AMDAccelSharedUserClient10gMetaClassE",
         };
+        static_assert(arrsize(kPairs) == kClassPairCount, "Update kClassPairCount with the class pair table");
         for (size_t i = 0; i < arrsize(kPairs); ++i) {
             ok &= resolve(patcher, id, kPairs[i], this->classPairs[i].oldClass, slide, size);
         }
@@ -442,6 +466,8 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
         KernelPatcher::RouteRequest routes[] = {
             {"__ZN37AMDRadeonX5000_AMDGraphicsAccelerator5startEP9IOService", acceleratorStart,
              this->orgAcceleratorStart},
+            {"__ZN37AMDRadeonX5000_AMDGraphicsAccelerator4stopEP9IOService", acceleratorStop,
+             this->orgAcceleratorStop},
             {"__ZN37AMDRadeonX5000_AMDGraphicsAccelerator9newSharedEv", newShared, this->orgNewShared},
             {"__ZN37AMDRadeonX5000_AMDGraphicsAccelerator19newSharedUserClientEv", newClient, this->orgNewClient},
             {"__ZN41AMDRadeonX5000_AMDGFX9GraphicsAccelerator15newVideoContextEv", newVideo, this->orgNewVideo},
@@ -509,6 +535,7 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
             "__ZN29AMDRadeonX6000_AMDAccelShared10gMetaClassE",
             "__ZN39AMDRadeonX6000_AMDAccelSharedUserClient10gMetaClassE",
         };
+        static_assert(arrsize(kPairs) == kClassPairCount, "Update kClassPairCount with the class pair table");
         for (size_t i = 0; i < arrsize(kPairs); ++i) {
             ok &= resolve(patcher, id, kPairs[i], this->classPairs[i].newClass, slide, size);
         }

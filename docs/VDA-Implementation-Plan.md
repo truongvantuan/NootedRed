@@ -34,6 +34,18 @@ default-off boot and the wider acceptance matrix (Chromium, DRM, 10-bit, other A
 - Hardware/reboot validation passed on 2026-10-19; the deployment and rollback steps are in
   [`VDA-Deployment.md`](VDA-Deployment.md).
 
+### Post-validation hardening (2026-10-19 code review)
+
+- X5000 accelerator `stop` is routed as well as `start`; teardown clears `engineAllocated`, the X5000
+  hardware handle and the media properties without touching a possibly-destroyed hardware object. A later
+  start can allocate a fresh engine.
+- The native page backend matches a first-word fingerprint before the full 4 KiB image, installs the
+  combined table atomically (no zero-site/partial pages), and counts applied VDA pages atomically.
+- `-NRedVDA` is rejected unless the running kernel is exactly 15.8.1 24H32 and there is no external video
+  device; the native backend also rechecks the external-device condition before building VDA pages.
+- The VA/AppleGVA generators recover stock pages from the committed tables while the runtime page cache is
+  patched; the VA generator verifies the stock `__text` hash in `--check`.
+
 ### Bring-up log
 
 - First boot with `-NRedVDA` (2026-10-19): VDA policy ran (`NRedVDARequested=1`,
