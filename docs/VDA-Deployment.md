@@ -116,7 +116,8 @@ adverse case from the community fork). Watch for:
 
 ## 7. Validated results (2026-10-19)
 
-The target passed the first real-hardware run:
+The target passed the real-hardware runs on 2026-10-19 (latest loaded kext SHA-256
+`3495df006ca54f4d9cfd4899e23126efeb1009c9a0ea51660b4bf3c27a9121ba`):
 
 - `NRedVCNStage=11`, both ABI guards `=1`, X6000 native load ready, engine allocated, VCN
   `initHardware=1`; VA/AppleGVA patches applied and `h264_videotoolbox`/`hevc_videotoolbox` encode works;
