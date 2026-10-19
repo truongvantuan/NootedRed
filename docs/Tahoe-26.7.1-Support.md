@@ -9,6 +9,10 @@ External dataset:
 - macOS 26.7.1 (25G241), Darwin 25.6.0
 - AMD Ryzen 5 5500U, Radeon Renoir `0x164C`
 - Archive SHA-256: `c7c166125d7e18ca9a9a37711b357924e6175b847cd7638158f5eba4788c77f7`
+- Second dataset: `0x1638` Renoir, same 25G241 build, archive SHA-256
+  `b45d3f6a4cf3eda5089965a82a45bdd167065820ec9820155acb7ec6123f188b`
+- Both datasets have byte-identical GL/MTL drivers, so this page data is shared across
+  Renoir/Green Sardine and APU selection stays in DeviceProfile.
 
 ## Patch sites
 
