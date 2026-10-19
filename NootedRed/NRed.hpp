@@ -63,6 +63,9 @@ class NRed
     UInt16           enumRevision{0};      // TODO: Remove!
     UInt64           fbOffset{0};          // TODO: Remove!
     bool             externalVideo{false}; // any non-iGPU video device; VDA must stay disabled there
+    // False until the device ID is recognised.  An unknown AMD iGPU makes NootedRed inert instead of
+    // panicking, so new APUs can boot and be diagnosed (see docs/Compatibility-Architecture.md, M2).
+    bool             supported{false};
 
 public:
     static NRed& singleton();
@@ -74,6 +77,7 @@ public:
     auto  getEnumRevision() const { return enumRevision; }      // TODO: Remove!
     auto  getFbOffset() const { return fbOffset; }              // TODO: Remove!
     bool  hasExternalVideo() const { return externalVideo; }    // VDA safety check
+    bool  isSupported() const { return supported; }             // false on an unknown AMD iGPU
 
     void init();
     void hwLateInit();        // TODO: Remove!
