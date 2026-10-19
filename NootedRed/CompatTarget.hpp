@@ -27,9 +27,11 @@
 // Identity of an Apple binary that NootedRed patches.
 //
 // This is the version-axis half of the compatibility model in docs/Compatibility-Architecture.md: patch
-// data belongs to a binary build (Mach-O `LC_UUID`), not to a macOS version string.  Milestone 1 reads and
-// logs the identity of the file-backed GL driver bundle; shared-cache, kernel-kext and user-space VDA
-// identities follow in the target-identity milestone.
+// data belongs to a binary build (Mach-O `LC_UUID`), not to a macOS version string.  The type and the
+// parser are in place, but capture is deferred to the target-identity milestone: reading the driver file
+// through the VFS during Lilu's patcher-load phase is not safe enough for the boot path, so the boot-time
+// `readFileIdentity()` experiment was removed after it was suspected of stalling boot.  The capture will
+// use the code-signing hook's in-memory page data (or vnode name resolution) instead.
 class CompatTarget
 {
 public:
@@ -56,10 +58,6 @@ public:
     // Parses `LC_UUID` from a thin 64-bit Mach-O header.  Read-only and bounds-checked; returns false for
     // fat binaries, non-Mach-O data and truncated buffers.
     static auto parseMachOIdentity(Identity& identity, const UInt8* header, size_t size) -> bool;
-
-    // Reads the first pages of a file-backed Mach-O through the VFS and fills its identity.  Called once at
-    // patcher load, never from the code-signing hot path.  A failed read keeps the identity invalid.
-    static auto readFileIdentity(Identity& identity, const char* path, Kind kind) -> bool;
 
     // Emits the canonical identity line (the `Compat` log tag) used for field triage.
     static void logIdentity(const Identity& identity);

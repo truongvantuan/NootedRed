@@ -23,7 +23,6 @@
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
-#include <CompatTarget.hpp>
 #include <DeviceProfile.hpp>
 #include <NRed.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
@@ -1053,19 +1052,6 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
 
     // Pick the version/family-aware GL patch set before the native page list is built from it.
     if (glEnabled) { this->selectPatchSet(); }
-
-    // Read-only identity of the driver build the patch set was generated from.  Patch data is still keyed
-    // by the macOS version; this line is the first step toward keying it by binary identity instead
-    // (docs/Compatibility-Architecture.md).
-    if (glEnabled && this->patches != nullptr && this->patchCount != 0) {
-        CompatTarget::Identity glDriverIdentity{};
-        if (CompatTarget::readFileIdentity(glDriverIdentity, kGLDriverPath, CompatTarget::kGLDriver)) {
-            CompatTarget::logIdentity(glDriverIdentity);
-        }
-        else {
-            SYSLOG("UserPatch", "Could not read the GL driver identity from %s", kGLDriverPath);
-        }
-    }
 
     // Build the native page list from whichever tables are enabled.  The VDA tables only exist on macOS 11
     // and newer, where the native backend is the one being used, and only for the validated 0x1638 profile.

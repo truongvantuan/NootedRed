@@ -21,9 +21,7 @@
 // along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowledge/raw/branch/master/LICENSE-v1.md.
 
 #include <CompatTarget.hpp>
-#include <Headers/kern_file.hpp>
 #include <Headers/kern_util.hpp>
-#include <sys/vnode.h>
 
 namespace
 {
@@ -33,9 +31,6 @@ namespace
     constexpr UInt32 kLoadCommandUuid  = 0x1B;
     constexpr size_t kMachHeader64Size = 32;
     constexpr size_t kMaxLoadCommands  = 0x1000;
-
-    // Enough to cover the Mach-O header and its load commands for a thin driver binary.
-    constexpr size_t kHeaderReadSize = 0x4000;
 
 }    // namespace
 
@@ -93,43 +88,6 @@ auto CompatTarget::parseMachOIdentity(Identity& identity, const UInt8* const hea
     }
 
     return false;
-}
-
-auto CompatTarget::readFileIdentity(Identity& identity, const char* const path, const Kind kind) -> bool
-{
-    identity      = Identity{};
-    identity.kind = kind;
-    identity.path = path;
-
-    if (path == nullptr) { return false; }
-
-    auto* const buffer = Buffer::create<UInt8>(kHeaderReadSize);
-    if (buffer == nullptr) { return false; }
-
-    auto* const context = vfs_context_create(nullptr);
-    if (context == nullptr) {
-        Buffer::deleter(buffer);
-        return false;
-    }
-
-    auto found = false;
-    vnode_t vnode{nullptr};
-    if (vnode_lookup(path, 0, &vnode, context) == 0 && vnode != nullptr) {
-        const auto fileSize = FileIO::readFileSize(vnode, context);
-        if (fileSize >= kMachHeader64Size) {
-            const auto readSize = fileSize < kHeaderReadSize ? fileSize : kHeaderReadSize;
-            if (FileIO::readFileData(buffer, 0, readSize, vnode, context) == 0) {
-                found = parseMachOIdentity(identity, buffer, readSize);
-            }
-        }
-
-        vnode_put(vnode);
-    }
-
-    vfs_context_rele(context);
-    Buffer::deleter(buffer);
-
-    return found;
 }
 
 void CompatTarget::logIdentity(const Identity& identity)

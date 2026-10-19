@@ -345,24 +345,25 @@ this work plus the media data from the VDA work).
     `minVersion`/`maxVersion`;
   - compile-time invariants: unique device IDs, valid ranges, graphics enabled, media enablement limited
     to the hardware-validated profile.
-- `CompatTarget` target-identity type (`NootedRed/CompatTarget.{hpp,cpp}`): bounds-checked `LC_UUID`
-  parsing from a thin 64-bit Mach-O header, and a read-only VFS header read for the file-backed
-  `AMDRadeonX5000GLDriver` bundle. The result is logged as the canonical `Compat` identity line; it is
-  the seed of binary-identity keying but no site selection uses it yet.
+- `CompatTarget` target-identity type and bounds-checked Mach-O `LC_UUID` parser
+  (`NootedRed/CompatTarget.{hpp,cpp}`). Boot-time capture is deliberately **not** wired yet: the first
+  implementation read the driver file through the VFS during Lilu's patcher-load phase, which turned out to
+  be the only new early-boot side effect in the merged tree and is suspected of stalling boot, so it was
+  removed. Identity capture returns in Milestone 2 using in-memory page/vnode data.
 - Canonical decision log + IORegistry properties (`DeviceProfile::logCurrent()`), emitted once after
   device detection.
-- No behaviour change: all existing profiles keep the same graphics policy and disabled media; the
-  identity read is read-only and only adds log lines.
+- No behaviour change: all existing profiles keep the same graphics policy and disabled media; the log
+  additions are passive.
 
 Acceptance: `xmake -m release` builds; the existing default behaviour is unchanged; the log line
-contains the profile, family, level, Darwin version and both policies, and the GL driver identity line
-contains the bundle path and its `LC_UUID`.
+contains the profile, family, level, Darwin version and both policies.
 
 ### Milestone 2 — Target identity and unknown-device safety
 
 - `CompatTarget`/`PatchSite` types and the generated-table scaffold.
-- Runtime identity: `LC_UUID` from the `_cs_validate_page` vnode, cache UUID + image offset for MTL,
-  kext UUID for kernel patches.
+- Runtime identity: capture `LC_UUID` from the code-signing hook's in-memory page data (or vnode name
+  resolution at a safe phase), cache UUID + image offset for MTL, kext UUID for kernel patches. Do not
+  reintroduce file I/O in Lilu's patcher-load phase.
 - Unknown device becomes "unsupported" no-op (no panic) with a probe/log path; `DeviceProfile`
   fallback becomes reachable.
 - Wire the multi-OS framework onto these types; add `data-lint` for target tables.
