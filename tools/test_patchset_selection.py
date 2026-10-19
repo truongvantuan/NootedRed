@@ -28,6 +28,7 @@ SETS = [
     PatchSet("15.8.1 / Renoir-family", 24, 6, RENOIR | RENOIR_E | GREEN_SARDINE),
     PatchSet("15.8.1 / Raven-family", 24, 6, RAVEN | RAVEN2 | PICASSO),
     PatchSet("15.8.1 / gfx9 APU fallback", 24, 6, ALL),
+    PatchSet("26.7.1 / gfx9 APU", 25, 6, ALL),
 ]
 
 
@@ -56,6 +57,8 @@ def main() -> None:
         (24, 6, 0, "15.8.1 / gfx9 APU fallback"),
         (24, 5, RENOIR, None),
         (24, 7, RENOIR, None),
+        (25, 6, RENOIR, "26.7.1 / gfx9 APU"),
+        (25, 5, RENOIR, None),
         (23, 6, RENOIR, None),
     ]
     for major, minor, apus, expected in cases:

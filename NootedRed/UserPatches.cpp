@@ -28,6 +28,7 @@
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserPatches.hpp>
 #include <NRed.hpp>
+#include <TahoePatchData.hpp>
 #include <libkern/OSTypes.h>
 #include <mach/i386/vm_types.h>
 
@@ -881,6 +882,21 @@ static const UInt8 kGLDriverDualQuadPage[] = {
     };
     constexpr size_t kGLDriverPatchCount = arrsize(kGLDriverPatches);
 
+    // macOS 26.7.1 (Darwin 25.6.0) GL driver.  The driver layout moved: _gfx9_HwInfoInitData is at
+    // 0xDF80 and _glrAMD_GFX9_UpdateHwCbDualQuadMode at 0x819E, so the 15.8.1 page images cannot match.
+    // Only the GL driver is covered here; the Metal 26.7.1 sites still need validation.
+    static const UserPatches::PagePatch kTahoeGLDriverPatches[] = {
+        {UserPatcher::FileSegment::SegmentTextText, kTahoeGLHwInfoPage,    kGLDriverHwInfoFind,
+         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
+        {UserPatcher::FileSegment::SegmentTextText, kTahoeGLDualQuadPage,  kGLDriverDualQuadFind,
+         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
+        // The Metal pipeline context moved the CB_COLOR_CONTROL boolean write to +0xE4; patch the
+        // direct boolean assignment (and edx,~1 -> or edx,1) rather than the old 15.8.1 gate/setz pair.
+        {UserPatcher::FileSegment::SegmentTextText, kTahoeMTLControlPage, kTahoeMTLDualQuadFind,
+         kTahoeMTLDualQuadReplace,                  sizeof(kTahoeMTLDualQuadFind), 0, 1},
+    };
+    constexpr size_t kTahoeGLDriverPatchCount = arrsize(kTahoeGLDriverPatches);
+
     // Version/family-aware patch sets.  Add one entry per validated macOS build; the exact page images
     // still gate every site, so a set from another build can never modify a mismatched driver page.
     // `15.8.1` is Darwin 24.6.0 (macOS 15.8.1, build 24H32).
@@ -900,6 +916,9 @@ static const UInt8 kGLDriverDualQuadPage[] = {
         {"15.8.1 / gfx9 APU fallback", PenguinWizardry::KernelVersion(24, 6),
          PenguinWizardry::KernelVersion(24, 6), UserPatches::kApuAll, kGLDriverPatches,
          kGLDriverPatchCount},
+        // macOS 26.7.1 (Darwin 25.6.0).  Exact page images make this a no-op on any other driver build.
+        {"26.7.1 / gfx9 APU", PenguinWizardry::KernelVersion(25, 6), PenguinWizardry::KernelVersion(25, 6),
+         UserPatches::kApuAll, kTahoeGLDriverPatches, kTahoeGLDriverPatchCount},
     };
     constexpr size_t kGLDriverPatchSetCount = sizeof(kGLDriverPatchSets) / sizeof(kGLDriverPatchSets[0]);
 
