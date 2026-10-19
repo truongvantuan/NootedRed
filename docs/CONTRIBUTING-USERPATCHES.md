@@ -92,7 +92,14 @@ Renoir, and produces black tiles/missing thumbnails.
 
 ## Adding a macOS build
 
-### 1. Use a pristine driver
+### 1. Collect the machine first
+
+Run [`tools/collect_compat_data.py`](../tools/README-collect-compat-data.md) on the target machine. It
+records the driver images, the candidate patch sites (`chromium/sites.json`) and the media/VDA data, and
+it warns when NootedRed has already patched the page cache. For generation data, use a pristine boot
+(`-NRedOff` or without NootedRed).
+
+### 2. Use a pristine driver
 
 Generate data from the target build's **unmodified** driver and dyld shared cache. If a driver page was
 already patched (for example by an earlier experiment), `gen_patch_data.py` will correctly fail its

@@ -218,7 +218,8 @@ validated on the target.
 
 ## Required data collection
 
-Use `tools/collect_platform_data.py` on each target machine. The zip includes:
+Use `tools/collect_compat_data.py` on each target machine (see
+[`tools/README-collect-compat-data.md`](../tools/README-collect-compat-data.md)). The archive includes:
 
 - GPU/APU identity and `GPUConfigurationVariable`;
 - X5000/X6000 kexts, PlugIns, Info.plists and firmware resources;

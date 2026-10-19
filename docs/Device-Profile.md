@@ -159,8 +159,8 @@ media{gate=0 vcn=0x0202 fw=ativvaxy_nv.dat ring=0x10000 fence=0x1000 h264=1 hevc
 The current profile table is device-wide; OS-specific patch data lives in the patch-set/target tables, not
 in this file. When adding a macOS build:
 
-- collect the target binaries with the platform data collector and add the target-identity data (see
-  [Compatibility Architecture](Compatibility-Architecture.md));
+- collect the target binaries with the [compatibility data collector](../tools/README-collect-compat-data.md)
+  and add the target-identity data (see [Compatibility Architecture](Compatibility-Architecture.md));
 - add the generated patch data and its validation status;
 - keep media and graphics feature flags independent.
 
