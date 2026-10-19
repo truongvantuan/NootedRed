@@ -29,15 +29,15 @@ The goal is one kext binary and one data model that:
 | Component | `master` | Feature branches | Problem |
 | --- | --- | --- | --- |
 | Patch selection | single `PagePatch` table, `-NRedGLFix` | `PatchSet{minVersion,maxVersion,ApuMask}` in `feature/multi-os-multi-apu`, `feature/tahoe-26.7.1` | version and APU are one conjunctive key |
-| Site location | exact 4 KiB page image + `find`/`replace` | `SignaturePatch` (32 B masked context) in `research/patch-resolver` | per-build snapshots; resolver is a smaller snapshot |
+| Site location | exact 4 KiB page image + `find`/`replace` | `SignaturePatch` (32 B masked context), ported into `master` as an opt-in fallback | per-build snapshots; resolver is a smaller snapshot |
 | Hardware model | `DeviceProfile` (device ID key, media all false) | VDA branch adds VCN generation/firmware/ring fields | version range unused; media fields unreachable |
 | VCN data | none | `VCNKernelData.hpp`, `VDAVAData.hpp`, `VDAGVAData.hpp`, generators with `--check` | all data pinned to 15.8.1 / `0x1638` |
 | Data collection | `platform-data/`, `tools/collect_platform_data.py`, importer | — | captures binaries but no generated consumer; `kexts.json` has `binary: null` |
 | Media capability | personality advertises `IOGVACodec=AMDVCN2` unconditionally | `hasVCN0` from profile, all false | advertisement and kernel capability have different sources |
 
 This section records the state before the branch integration described in §8. After that integration,
-`master` carries the `PatchSet` framework, the Tahoe page data and the VDA module; the resolver and the
-iGPU/HwInfo research remain on their research branches.
+`master` carries the `PatchSet` framework, the Tahoe page data, the VDA module and the resolver prototype
+as an opt-in fallback; the iGPU/HwInfo research remains on its research branch.
 
 Recent data points that motivate the redesign:
 - `0x1638` and `0x164c` on the same macOS 26.7.1 build have identical GL/MTL driver hashes but different
@@ -323,8 +323,8 @@ this order:
    verification and feed its decisions through the same plan/log path.
 5. **Research branches** (`research/igpu-hwinfo-logic`): documentation/analysis, merge last.
 
-Status: steps 1, 3 and 4 are merged into `master` (2026-10-19); step 2
-(`research/patch-resolver`) and step 5 remain on their research branches. No branch was rebased: the
+Status: steps 1, 2, 3 and 4 are integrated into `master` (2026-10-19) — the resolver prototype was ported
+from `research/patch-resolver` as an opt-in fallback; step 5 remains on its research branch. No branch was rebased: the
 conflicts were resolved by keeping the framework's `PatchSet` selection and the VDA module's direct
 `processPatcher` wiring, and by merging both halves of `DeviceProfile` (capability/version model from
 this work plus the media data from the VDA work).
@@ -375,7 +375,8 @@ turns the feature off with a reason; adding a build only touches generated data.
 
 - Function/symbol-scoped anchors, masked contexts, instruction decode before/after write, ambiguity
   rejection, module/page scoping for both GL and MTL.
-- Upgrade `research/patch-resolver` to L1–L3 and keep L0 as the validated fast path.
+- The resolver prototype is now in `master` (`-NRedGLFixResolve` / QA `-NRedGLFixResolveOnly`); harden it
+to L1–L3 and keep L0 as the validated fast path.
 - Generate anchors from symbols in `gen_patch_data.py`; validate anchor uniqueness offline.
 
 Acceptance: resolver QA mode (`-NRedGLFixResolveOnly`) still passes on 15.8.1; a build whose page
@@ -416,7 +417,7 @@ validated matrix; VCN1 either works on hardware or is explicitly unavailable.
 - [Chromium/Electron fix usage](Chromium-Fix-Usage.md)
 - [Device profile / media capability layer](Device-Profile.md)
 - [`analysis/multi-os-multi-apu.md`](../analysis/multi-os-multi-apu.md)
-- `analysis/patch-resolver.md` (`research/patch-resolver`, research branch only)
+- [`analysis/patch-resolver.md`](../analysis/patch-resolver.md)
 - [VDA implementation plan](VDA-Implementation-Plan.md) and
   [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md)
 - [Platform data collector](../tools/README-collect-platform-data.md)
