@@ -414,9 +414,9 @@ validated matrix; VCN1 either works on hardware or is explicitly unavailable.
 - [Contributing to UserPatches](CONTRIBUTING-USERPATCHES.md)
 - [Chromium/Electron fix usage](Chromium-Fix-Usage.md)
 - [Device profile / media capability layer](Device-Profile.md)
-- `analysis/multi-os-multi-apu.md` (`feature/multi-os-multi-apu`)
-- `analysis/patch-resolver.md` (`research/patch-resolver`)
-- `docs/VDA-Implementation-Plan.md`, `analysis/vda-1581-hardware-validation.md`
-  (`feature/vda-hardware-decode`, not present on `master`)
+- [`analysis/multi-os-multi-apu.md`](../analysis/multi-os-multi-apu.md)
+- `analysis/patch-resolver.md` (`research/patch-resolver`, research branch only)
+- [VDA implementation plan](VDA-Implementation-Plan.md) and
+  [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md)
 - [Platform data collector](../tools/README-collect-platform-data.md)
 - [Platform data index](Platform-Data-Index.md)

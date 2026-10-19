@@ -1222,7 +1222,8 @@ auto UserPatches::buildNativePatches() -> bool
         }
 
         if (placed != patch.count) {
-            SYSLOG("UserPatch", "Failed to locate all occurrences of patch %zu (%zu missing); refusing the native page table",
+            SYSLOG("UserPatch",
+                   "Failed to locate all occurrences of patch %zu (%zu missing); refusing the native page table",
                    patchIndex, patch.count - placed);
             return false;
         }
@@ -1236,7 +1237,8 @@ auto UserPatches::buildNativePatches() -> bool
 
         if (page == nullptr) {
             if (this->nativePageCount >= kMaxNativePages) {
-                SYSLOG("UserPatch", "Too many distinct pages for the native backend (%zu); refusing the native page table",
+                SYSLOG("UserPatch",
+                       "Too many distinct pages for the native backend (%zu); refusing the native page table",
                        kMaxNativePages);
                 return false;
             }
@@ -1248,7 +1250,8 @@ auto UserPatches::buildNativePatches() -> bool
         }
 
         if (page->siteCount + patch.count > kMaxSitesPerPage) {
-            SYSLOG("UserPatch", "Too many patch sites on a single page (%zu + %zu > %zu); refusing the native page table",
+            SYSLOG("UserPatch",
+                   "Too many patch sites on a single page (%zu + %zu > %zu); refusing the native page table",
                    page->siteCount, patch.count, kMaxSitesPerPage);
             return false;
         }
