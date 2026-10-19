@@ -19,15 +19,6 @@ local function nred_branch_dir()
     return branch
 end
 
-local function nred_branch_dir()
-    local branch = os.getenv("NRED_BUILD_BRANCH") or nred_git_branch()
-    branch = branch:gsub("[^%w._-]+", "-"):gsub("^%-+", ""):gsub("%-+$", "")
-    if branch == "" then
-        branch = "unknown"
-    end
-    return branch
-end
-
 
 
 target("NootedRed")
