@@ -109,11 +109,6 @@ void NRed::init()
         [](void* const, KernelPatcher& patcher)
         {
             singleton().processPatcher(patcher);
-
-            // Unknown AMD iGPU: stay inert.  Do not inject personalities or install runtime metaclass
-            // hooks for a device NootedRed does not know yet.
-            if (!singleton().isSupported()) { return; }
-
             DriverInjector::singleton().processPatcher(patcher);
             PenguinWizardry::RuntimeMCManager::singleton().processPatcher(patcher);
         },
@@ -123,8 +118,6 @@ void NRed::init()
         nullptr, 0,
         [](void* const, KernelPatcher& patcher, const size_t id, const mach_vm_address_t slide, const size_t size)
         {
-            if (!singleton().isSupported()) { return; }
-
             AGDP::singleton().processKext(patcher, id, slide, size);
             Backlight::singleton().processKext(patcher, id, slide, size);
             DebugEnabler::singleton().processKext(patcher, id, slide, size);
@@ -199,12 +192,19 @@ void NRed::processPatcher(KernelPatcher& patcher)
     PANIC_COND(WIOKit::readPCIConfigValue(this->iGPU, WIOKit::kIOPCIConfigVendorID) != WIOKit::VendorID::ATIAMD, "NRed",
                "iGPU is not an AMD one");
 
-    this->deviceID = static_cast<UInt16>(WIOKit::readPCIConfigValue(this->iGPU, WIOKit::kIOPCIConfigDeviceID));
+    WIOKit::renameDevice(this->iGPU, "IGPU");
+    WIOKit::awaitPublishing(this->iGPU);
+    UInt8 builtInBytes[] = {0x00};
+    this->iGPU->setProperty("built-in", builtInBytes, sizeof(builtInBytes));
+    char slotNameBytes[] = "built-in";
+    this->iGPU->setProperty("AAPL,slot-name", slotNameBytes, sizeof(slotNameBytes));
+    char hdaGfxBytes[] = "onboard-1";
+    this->iGPU->setProperty("hda-gfx", hdaGfxBytes, sizeof(hdaGfxBytes));
 
+    this->deviceID = static_cast<UInt16>(WIOKit::readPCIConfigValue(this->iGPU, WIOKit::kIOPCIConfigDeviceID));
     // Legacy attribute mapping kept for the existing hardware paths (X5000/HWLibs).  The compatibility
     // layer's source of truth for family and capability is DeviceProfile, which distinguishes Cezanne and
     // Barcelo explicitly (see docs/Compatibility-Architecture.md).
-    this->supported = true;
     switch (this->deviceID) {
         case 0x15D8: {
             this->attributes.setPicasso();
@@ -222,28 +222,8 @@ void NRed::processPatcher(KernelPatcher& patcher)
             this->attributes.setGreenSardine();
             this->enumRevision = 0xA1;
         } break;
-        default: this->supported = false; break;
+        default: PANIC("NRed", "Unknown device ID: 0x%X", this->deviceID);
     }
-
-    if (!this->supported) {
-        // Unknown AMD APU: stay inert instead of panicking, so the machine boots and the owner can collect
-        // a platform dataset for a new DeviceProfile.  Kext-load callbacks check isSupported(), and the
-        // user-space/VDA modules are only reached below this point.
-        SYSLOG("NRed", "Unsupported AMD iGPU device ID 0x%X; NootedRed stays inert", this->deviceID);
-        this->setProp32("NRedUnsupported", 1);
-        DeviceInfo::deleter(devInfo);
-        return;
-    }
-
-    WIOKit::renameDevice(this->iGPU, "IGPU");
-    WIOKit::awaitPublishing(this->iGPU);
-    UInt8 builtInBytes[] = {0x00};
-    this->iGPU->setProperty("built-in", builtInBytes, sizeof(builtInBytes));
-    char slotNameBytes[] = "built-in";
-    this->iGPU->setProperty("AAPL,slot-name", slotNameBytes, sizeof(slotNameBytes));
-    char hdaGfxBytes[] = "onboard-1";
-    this->iGPU->setProperty("hda-gfx", hdaGfxBytes, sizeof(hdaGfxBytes));
-
     this->pciRevision = static_cast<UInt8>(WIOKit::readPCIConfigValue(this->iGPU, WIOKit::kIOPCIConfigRevisionID));
 
     // One canonical compatibility line per boot; it also publishes the facts as IORegistry properties so a
