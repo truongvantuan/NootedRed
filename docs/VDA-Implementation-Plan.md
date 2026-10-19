@@ -54,7 +54,8 @@ default-off boot and the wider acceptance matrix (Chromium, DRM, 10-bit, other A
   software YUV output byte-for-byte. Hardware decode is working on the target. Evidence and caveats:
   [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md). A follow-up
   found hardware encode (`h264_videotoolbox`/`hevc_videotoolbox`) failing with -12704 and added the VCN2
-  feedback-stride patches; that build is deployed and awaits a reboot test (decode is unchanged).
+  feedback-stride patches; after the reboot both encoders produced decodable 720p/1080p files and the
+  VideoProc probe path is ready for a GUI re-check (decode is unchanged).
 
 ## Prior art and chosen direction
 
