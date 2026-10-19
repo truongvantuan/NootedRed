@@ -888,6 +888,10 @@ static const UInt8 kGLDriverDualQuadPage[] = {
          kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
         {UserPatcher::FileSegment::SegmentTextText, kTahoeGLDualQuadPage,  kGLDriverDualQuadFind,
          kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
+        // The Metal pipeline context moved the CB_COLOR_CONTROL boolean write to +0xE4; patch the
+        // direct boolean assignment (and edx,~1 -> or edx,1) rather than the old 15.8.1 gate/setz pair.
+        {UserPatcher::FileSegment::SegmentTextText, kTahoeMTLControlPage, kTahoeMTLDualQuadFind,
+         kTahoeMTLDualQuadReplace,                  sizeof(kTahoeMTLDualQuadFind), 0, 1},
     };
     constexpr size_t kTahoeGLDriverPatchCount = arrsize(kTahoeGLDriverPatches);
 
