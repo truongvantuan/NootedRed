@@ -59,8 +59,11 @@ struct Profile {
 ```
 
 The media capability data is populated for every family. The engine flags are enablement, not capability:
-only the designated `0x1638` VDA target sets `hasVCN0`, and only after the `-NRedVDA` bridge has prepared both
-drivers and allocated the engine. All other profiles keep the flags false until their own validation.
+the VCN 2.x profiles (Renoir, Renoir/Green Sardine, Cezanne and Barcelo) set `hasVCN0` so the same VDA
+implementation can be tried on every VCN 2.x APU. `0x1638` is the hardware-validated target; the other
+VCN 2.x APUs are experimental. Raven/Raven2/Picasso are VCN 1.x and keep media disabled because the X6000
+VCN2 bridge cannot serve them. The engine is only enabled after the `-NRedVDA` bridge has prepared both
+drivers and allocated the engine.
 
 `level` is a coarse, per-profile roll-up for logging, and it stays `experimental` while media is disabled on
 most profiles. The authoritative per-feature level is generated from the compatibility manifest (see the
@@ -86,20 +89,18 @@ outside the profile's `[minVersion, maxVersion]` window. `current()` falls back 
 keeps the graphics policy enabled and all media disabled, so an unknown combination never enables media.
 The version window is metadata for now: per-build data is keyed by binary identity, not by this range.
 
-An unknown AMD iGPU is no longer a panic: `NRed::processPatcher()` logs `Unsupported AMD iGPU device ID
-0x...`, sets `NRedUnsupported` on the iGPU and stays inert — kext-load callbacks are skipped, and the
-user-space/VDA modules are not reached. The machine boots, which lets the owner collect a platform
-dataset and add a profile for the new APU. The fallback profile then applies on later boots once the ID is
-in the table.
+Note: `NRed::processPatcher()` still panics on an unknown device ID, so the fallback is effectively
+unreachable for devices not in the table. The unknown-device no-op policy is Milestone 2 of the
+architecture document.
 
 ## Media capability data
 
 | device ID | profile | VCN | firmware | H.264 | HEVC | AV1 | engines |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0x1636 | Renoir | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off (unvalidated) |
+| 0x1636 | Renoir | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | on (`-NRedVDA`, experimental) |
 | 0x1638 | Renoir / Green Sardine | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | VCN0 on (`-NRedVDA`, bridge ready) |
-| 0x164C | Cezanne | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off (unvalidated) |
-| 0x15E7 | Barcelo | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | off (unvalidated) |
+| 0x164C | Cezanne | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | on (`-NRedVDA`, experimental) |
+| 0x15E7 | Barcelo | 2.2 (`0x0202`) | `ativvaxy_nv.dat` | yes | yes | no | on (`-NRedVDA`, experimental) |
 | 0x15DD | Raven | 1.0-class (`0x0100`) | `ativvaxy_rv.dat` | yes | yes | no | off |
 | 0x15D8 | Raven2 / Picasso | 1.0-class (`0x0100`) | `ativvaxy_rv.dat` | yes | yes | no | off |
 
@@ -186,8 +187,8 @@ The Chromium fix remains independent. The VDA user-space half is a separate targ
 - `DeviceProfile` v2 (Milestone 1 of the compatibility architecture): implemented — capability fields,
   explicit Cezanne/Barcelo families, version-aware lookup, compile-time table invariants, canonical log.
 - Graphics policy: wired into `UserPatches`; current profiles keep it enabled.
-- Media policy: capability data populated; only `0x1638` enables VCN0 after the bridge prepared both
-  drivers. All other profiles stay disabled until hardware validation.
+- Media policy: capability data populated; the VCN 2.x profiles enable VCN0 (`0x1638` validated, the
+  other VCN 2.x APUs experimental). VCN 1.x profiles stay disabled until a VCN 1.x path exists.
 - `-NRedVDA`: parsed and logged, default off; with the opt-in it drives `VCNBridge` and the generated
   VA/AppleGVA user-space patches.
 - Build: passes (release; debug/releasedbg were validated on the VDA branch before the merge).

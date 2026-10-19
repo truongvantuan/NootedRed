@@ -68,8 +68,8 @@ namespace
     bool isSupportedDevice()
     {
         // The profile is the single source of truth for the target: a VCN 2.x device whose profile enables
-        // the engine (currently only 0x1638) may use this bridge.  The generated ABI guards and the exact
-        // build check below remain the hard safety gates.
+        // the engine (0x1638 is validated; the other VCN 2.x APUs are experimental) may use this bridge.  The
+        // generated ABI guards and the exact build check remain the hard safety gates.
         const auto* const profile = DeviceProfile::current();
         return isSupportedBuild() && !NRed::singleton().hasExternalVideo() && profile != nullptr
                && profile->media.vcnGeneration == DeviceProfile::kVcn2_2 && profile->media.hasVCN0;

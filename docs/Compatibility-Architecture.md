@@ -166,10 +166,9 @@ SE/CU/RB configuration for graphics, VCN IP version and firmware variant for med
 same predicate Mesa uses (`Stoney`, `Vega12`, `Raven`, `Raven2`, `Renoir`, `gfx10.3+`). A device-ID
 table remains the fallback for hardware that cannot be probed that early.
 
-Unknown devices are an explicit "unsupported" outcome instead of a panic: the unknown-device no-op is
-implemented (a `NRedUnsupported` IORegistry property plus skipped kext-load callbacks), which also makes
-the `DeviceProfile` fallback reachable. The remaining Milestone 2 work is the probe path and the safe
-binary-identity capture.
+Unknown devices become an explicit "unsupported" outcome instead of a panic. The panic in
+`NRed::processPatcher()` currently also makes the `DeviceProfile` fallback unreachable; the unknown
+device policy lands in Milestone 2 together with the probe path.
 
 ### 4.5 Runtime pipeline
 
@@ -301,6 +300,7 @@ illustrative until Milestone 4):
 | --- | --- | --- | --- | --- |
 | 15.8.1 (24H32) | Renoir `0x1638` | GL/Metal fix | validated | `analysis/hwinfo-capability-source.md` |
 | 15.8.1 (24H32) | Renoir `0x1638` | VDA decode/encode | validated (`-NRedVDA`, default off) | `analysis/vda-1581-hardware-validation.md` |
+| 15.8.1 (24H32) | other VCN 2.x APUs (`0x1636`/`0x164C`/`0x15E7`) | VDA decode/encode | experimental (profile enables VCN0; bridge/ABI gates still apply) | `DeviceProfile` media policy |
 | 26.7.1 | `0x1638`/`0x164c` | GL/Metal fix | experimental | `feature/tahoe-26.7.1` data, unverified |
 | any | Raven/Raven2/Picasso | GL/Metal fix | experimental | code-compatible, no hardware validation |
 | any | Raven/Raven2/Picasso | VDA | unavailable | VCN1 not implemented |
@@ -366,8 +366,7 @@ contains the profile, family, level, Darwin version and both policies.
   resolution at a safe phase), cache UUID + image offset for MTL, kext UUID for kernel patches. Do not
   reintroduce file I/O in Lilu's patcher-load phase.
 - Unknown device becomes "unsupported" no-op (no panic) with a probe/log path; `DeviceProfile`
-  fallback becomes reachable. *(Implemented: inert mode, `NRedUnsupported` property, guarded callbacks;
-  the early-probe/dataset hint path is still pending.)*
+  fallback becomes reachable.
 - Wire the multi-OS framework onto these types; add `data-lint` for target tables.
 
 Acceptance: on 15.8.1 the selected target UUIDs are logged; a deliberately renamed/patched driver page
