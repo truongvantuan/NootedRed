@@ -42,7 +42,9 @@ default-off boot and the wider acceptance matrix (Chromium, DRM, 10-bit, other A
 - The native page backend matches a first-word fingerprint before the full 4 KiB image, installs the
   combined table atomically (no zero-site/partial pages), and counts applied VDA pages atomically.
 - `-NRedVDA` is rejected unless the running kernel is exactly 15.8.1 24H32 and there is no external video
-  device; the native backend also rechecks the external-device condition before building VDA pages.
+  device. The exact build string is checked at accelerator-start time, because the early kext-load phase can
+  run before `osversion` is populated; if it is still empty there, the ABI guards remain the protection.
+  The native backend also rechecks the external-device condition before building VDA pages.
 - The VA/AppleGVA generators recover stock pages from the committed tables while the runtime page cache is
   patched; the VA generator verifies the stock `__text` hash in `--check`.
 

@@ -48,21 +48,27 @@ namespace
 
     const char* const kBootArgVDA = "-NRedVDA";
 
-    // Only the tested VCN 2.2 device is bridged for now.  The generated data is per-OS/per-driver, and the
-    // other VCN 2.2 APUs need their own hardware validation before they are enabled.
+    // All generated data in this tree was derived from macOS 15.8.1 (24H32, Darwin 24.6.0).
     bool isSupportedOS()
     {
-        // All generated data in this tree was derived from macOS 15.8.1 (24H32, Darwin 24.6.0).  Do not
-        // use it on another build: the guards would usually reject it, but the force-load and routes would
-        // still have side effects before they do.
-        return currentKernelVersion().major() == 24 && currentKernelVersion().minor() == 6
-               && strncmp(osversion, "24H32", 5) == 0;
+        return currentKernelVersion().major() == 24 && currentKernelVersion().minor() == 6;
+    }
+
+    // The build string is checked once the accelerator starts, not in NRed::init: the early kext-load
+    // phase can run before `osversion` is populated, which would otherwise disable a valid bridge.
+    bool isSupportedBuild()
+    {
+        if (!isSupportedOS()) { return false; }
+        // If the early-boot version string is not populated yet, the ABI guards are the remaining
+        // protection; once it is visible, require the exact 24H32 build.
+        if (osversion[0] == '\0') { return true; }
+        return strncmp(osversion, "24H32", 5) == 0;
     }
 
     bool isSupportedDevice()
     {
         const auto* const profile = DeviceProfile::current();
-        return isSupportedOS() && NRed::singleton().getDeviceID() == 0x1638
+        return isSupportedBuild() && NRed::singleton().getDeviceID() == 0x1638
                && !NRed::singleton().hasExternalVideo() && profile != nullptr
                && profile->media.vcnGeneration == DeviceProfile::kVcn2_2 && profile->media.hasVCN0;
     }
@@ -72,15 +78,15 @@ namespace
     // reason, which makes a failed boot diagnosable from ioreg without the unified log.
     void publishStage(const UInt32 stage)
     {
-        static volatile SInt32 lastStage{0};
+        static volatile UInt32 lastStage{0};
         if (NRed::singleton().getDeviceID() == 0) { return; }
 
         // The kext-load/start callbacks can run on different threads; publish only a monotonic maximum.
-        SInt32 current;
+        UInt32 current;
         do {
             current = lastStage;
-            if (stage <= static_cast<UInt32>(current)) { return; }
-        } while (!OSCompareAndSwap(current, static_cast<SInt32>(stage), &lastStage));
+            if (stage <= current) { return; }
+        } while (!OSCompareAndSwap(current, stage, &lastStage));
 
         NRed::singleton().setProp32("NRedVCNStage", stage);
     }
@@ -163,7 +169,7 @@ void VCNBridge::init()
     }
 
     if (!isSupportedOS()) {
-        SYSLOG("VCN", "VCN data is for macOS 15.8.1 24H32 (Darwin 24.6); -NRedVDA is ignored on this build");
+        SYSLOG("VCN", "VCN data is for macOS 15.8.1 (Darwin 24.6); -NRedVDA is ignored on this build");
         this->requested = false;
         return;
     }
