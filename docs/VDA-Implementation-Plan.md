@@ -52,7 +52,9 @@ default-off boot and the wider acceptance matrix (Chromium, DRM, 10-bit, other A
   `NRedVCNNativeLoadReady=1`, `NRedVCNEngineAllocated=1`, `NRedVCNLastHardwareInit=1`,
   `NRedVCNUserApplied=4`; H.264 720p/64x64 and HEVC 720p/1080p decode with VideoToolbox matched the
   software YUV output byte-for-byte. Hardware decode is working on the target. Evidence and caveats:
-  [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md).
+  [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md). A follow-up
+  found hardware encode (`h264_videotoolbox`/`hevc_videotoolbox`) failing with -12704 and added the VCN2
+  feedback-stride patches; that build is deployed and awaits a reboot test (decode is unchanged).
 
 ## Prior art and chosen direction
 

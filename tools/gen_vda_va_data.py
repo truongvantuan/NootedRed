@@ -126,6 +126,40 @@ PATCHES = [
         "createUVDCommand site that shares the same 10-byte prefix is excluded by the 14-byte find.",
     },
     {
+        "key": "Vcn2EncCommandFeedbackStride",
+        "comment": "Vcn2EncCommand::getFeedbackSize: report the firmware's 48-byte feedback stride",
+        "symbols": [("__ZN14Vcn2EncCommand15getFeedbackSizeEv", 0x004)],
+        "find": "B8A40000005DC3",
+        "replace": "B8300000005DC3",
+        "rationale": "The stock VCN2 encoder reports a 0xA4 (164) byte feedback size while the VCN firmware "
+        "feedback layout used by this engine has a 0x30 (48) byte stride. The oversized value makes the "
+        "encoder's feedback/bitstream copy fail (VideoToolbox -12704 and an empty encoded packet). The "
+        "immediate is changed to 0x30; the function prologue/epilogue are preserved.",
+    },
+    {
+        "key": "Vcn2AvcProcessEncodeStatusStride",
+        "comment": "AVDVcn2AvcEncDataProcessor::ProcessEncodeStatus: use the 48-byte feedback stride",
+        "symbols": [
+            ("__ZN26AVDVcn2AvcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture", 0x02A),
+        ],
+        "find": "4869C0A4000000",
+        "replace": "4869C030000000",
+        "rationale": "The AVC status parser multiplies the feedback index by 0xA4 before reading the "
+        "per-frame feedback entry; it must use the same 0x30 stride as getFeedbackSize or it reads past "
+        "the feedback buffer. The 7-byte imul immediate is retargeted to 0x30.",
+    },
+    {
+        "key": "Vcn2HevcProcessEncodeStatusStride",
+        "comment": "AVDVcn2HevcEncDataProcessor::ProcessEncodeStatus: use the 48-byte feedback stride",
+        "symbols": [
+            ("__ZN27AVDVcn2HevcEncDataProcessor19ProcessEncodeStatusEP19_VAEncodeStatusInfoPvP15VAVendorTexture", 0x02A),
+        ],
+        "find": "4869C0A4000000",
+        "replace": "4869C030000000",
+        "rationale": "The HEVC status parser has the same 0xA4 feedback-index multiply as the AVC path; "
+        "the 7-byte imul immediate is retargeted to the 0x30 stride used by getFeedbackSize.",
+    },
+    {
         "key": "ForceGfx9VideoProcessors",
         "comment": "VAFactory::createColourFormatConverterVP/createDitheringVP/createDeblockerVP: GFX9 branch",
         "symbols": [
@@ -580,8 +614,95 @@ def verify_header(text: str, cache: DyldCache, image: MachOImage, pages, entries
     return errors
 
 
-def derive(cache: DyldCache):
+
+def committed_stock_pages(cache: DyldCache, image: MachOImage, output_path: pathlib.Path):
+    """Recover the stock page images for pages covered by an existing generated header.
+
+    The VDA table is applied by `UserPatches` through the code-signing validation hook, which writes
+    the patched bytes into the dyld cache's file-backed page cache.  A later generator run would then
+    read patched bytes from an unmodified cache file.  The committed header stores the stock page
+    images; use them as the generation source after checking that the live page is exactly the stock
+    page with a subset of that header's replacements applied.  This keeps `--check` working while
+    `-NRedVDA` is active and still rejects any unrelated system update.
+    """
+    if not output_path.exists():
+        return {}
+
+    text = output_path.read_text()
+    arrays, records = parse_header(text)
+    page_offsets = {}
+    for match in re.finditer(
+        r"// Page \d+: AMDRadeonVADriver2 __TEXT file page at image offset 0x([0-9A-F]+)",
+        text,
+    ):
+        page_offsets[f"Page{len(page_offsets)}"] = image.base + int(match.group(1), 16)
+    if not page_offsets:
+        return {}
+
+    record_sites = []
+    for match in re.finditer(r"// Sites: (.*?) \(page offset", text):
+        record_sites.append([int(value, 16) for value in re.findall(r"0x[0-9A-Fa-f]+", match.group(1))])
+    if len(record_sites) != len(records):
+        raise CacheError("committed header site comments do not match its patch records")
+
+    stock = {}
+    for page_name, page_address in page_offsets.items():
+        committed = arrays.get(page_name)
+        if committed is None or len(committed) != PAGE_SIZE:
+            raise CacheError(f"committed {page_name} is not a 4 KiB page image")
+        live = bytearray(cache.read_page(page_address))
+        for record, sites in zip(records, record_sites):
+            if record["page"] != page_name:
+                continue
+            find = arrays[record["find"]]
+            replace = arrays[record["replace"]]
+            for site in sites:
+                offset = site - page_address
+                current = bytes(live[offset : offset + len(find)])
+                if current == replace:
+                    live[offset : offset + len(find)] = find
+                elif current != find:
+                    raise CacheError(
+                        f"live page at {site:#x} is neither the committed find nor replace byte sequence"
+                    )
+        if bytes(live) != committed:
+            raise CacheError(f"live {page_name} does not match the committed stock page")
+        stock[page_address] = committed
+    return stock
+
+
+def derive(cache: DyldCache, output_path: pathlib.Path = OUTPUT_PATH):
     image = MachOImage(cache, VA_IMAGE_PATH)
+    stock = committed_stock_pages(cache, image, output_path)
+    if not stock:
+        pages, page_images, entries = build_plan(cache, image)
+        return image, pages, page_images, entries
+
+    original_read_page = cache.read_page
+    original_read = cache.read
+    original_text = image.text_bytes
+
+    def read_page(address: int) -> bytes:
+        page = address & ~(PAGE_SIZE - 1)
+        return stock.get(page, original_read_page(address))
+
+    def read(address: int, size: int) -> bytes:
+        page = address & ~(PAGE_SIZE - 1)
+        if page in stock and address + size <= page + PAGE_SIZE:
+            return stock[page][address - page : address - page + size]
+        return original_read(address, size)
+
+    def text_bytes() -> bytes:
+        data = bytearray(original_text())
+        for address, page in stock.items():
+            offset = address - image.base
+            if 0 <= offset <= len(data) - PAGE_SIZE:
+                data[offset : offset + PAGE_SIZE] = page
+        return bytes(data)
+
+    cache.read_page = read_page
+    cache.read = read
+    image.text_bytes = text_bytes
     pages, page_images, entries = build_plan(cache, image)
     return image, pages, page_images, entries
 
@@ -607,7 +728,7 @@ def main(argv: list[str]) -> int:
         if cache.base != CACHE_BASE:
             raise CacheError(f"dyld cache base {cache.base:#x} does not match {CACHE_BASE:#x}")
 
-        image, page_addresses, page_images, entries = derive(cache)
+        image, page_addresses, page_images, entries = derive(cache, args.output)
         header = render_header(cache, image, page_addresses, page_images, entries)
         errors = verify_header(header, cache, image, page_addresses, entries)
         if errors:
