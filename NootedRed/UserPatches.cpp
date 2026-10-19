@@ -1111,11 +1111,14 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
     }
 
     // Build the native page list from whichever tables are enabled.  The VDA tables only exist on macOS 11
-    // and newer, where the native backend is the one being used, and only for the validated 0x1638 profile.
-    const auto vdaAllowed = this->vdaEnabled && profile != nullptr && profile->deviceID == 0x1638
-                            && profile->media.hasVCN0 && !NRed::singleton().hasExternalVideo();
+    // and newer, where the native backend is the one being used.  The profile is the single source of truth
+    // for the target: only a VCN 2.x device whose profile enables the engine may receive the user-space VA
+    // tables (currently 0x1638 in the DeviceProfile table).
+    const auto vdaAllowed = this->vdaEnabled && profile != nullptr && profile->media.hasVCN0
+                            && profile->media.vcnGeneration == DeviceProfile::kVcn2_2
+                            && !NRed::singleton().hasExternalVideo();
     if (this->vdaEnabled && !vdaAllowed) {
-        SYSLOG("UserPatch", "VDA patches requested but this profile is not the validated 0x1638 target");
+        SYSLOG("UserPatch", "VDA patches requested but this profile does not enable the validated VCN 2.x target");
     }
 
     this->nativePatchCount = 0;

@@ -86,9 +86,11 @@ outside the profile's `[minVersion, maxVersion]` window. `current()` falls back 
 keeps the graphics policy enabled and all media disabled, so an unknown combination never enables media.
 The version window is metadata for now: per-build data is keyed by binary identity, not by this range.
 
-Note: `NRed::processPatcher()` still panics on an unknown device ID, so the fallback is effectively
-unreachable for devices not in the table. The unknown-device no-op policy is Milestone 2 of the
-architecture document.
+An unknown AMD iGPU is no longer a panic: `NRed::processPatcher()` logs `Unsupported AMD iGPU device ID
+0x...`, sets `NRedUnsupported` on the iGPU and stays inert — kext-load callbacks are skipped, and the
+user-space/VDA modules are not reached. The machine boots, which lets the owner collect a platform
+dataset and add a profile for the new APU. The fallback profile then applies on later boots once the ID is
+in the table.
 
 ## Media capability data
 
@@ -114,8 +116,10 @@ Raven2 is VCN 1.0.1, which share the `0x0100` VCN 1.0 family code in `MediaPolic
   tables when `-NRedVDA` is set.
 - `X5000::wrapSetupAndInitializeHWCapabilities()` reads `hasUVD0/hasVCE/hasVCN0` from the profile. The
   effective values are also gated by `VDA::isRequested()` and `VCNBridge::loadReady()`, so the engine is
-  only advertised when the user opted in, the 0x1638 profile enables it and both 15.8.1 drivers were
+  only advertised when the user opted in, the profile enables it and both 15.8.1 drivers were
   prepared/loaded. If engine allocation fails, `X5000::allocateHWEngines()` clears the capability again.
+  The VDA/user-space gates are capability-based (`media.hasVCN0` + `vcnGeneration == kVcn2_2`), not
+  hardcoded to a device ID, so enabling VCN0 on another profile is a data change.
 - `VDA::init()` parses the opt-in `-NRedVDA` boot argument (default off), and
   `VDA::processPatcher()` logs the media policy. When `-NRedVDA` is set it also publishes
   `NRedVDARequested`, `NRedVDAMediaEnabled` and `NRedVCNGeneration` on the iGPU for diagnostics.
