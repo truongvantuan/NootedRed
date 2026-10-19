@@ -11,7 +11,8 @@ default-off boot and the wider acceptance matrix (Chromium, DRM, 10-bit, other A
 
 - Phase 1 (capability skeleton): `DeviceProfile::MediaPolicy` carries `vcnGeneration`
   (`0x0100`/`0x0202`), `vcnFirmware` (`ativvaxy_rv.dat`/`ativvaxy_nv.dat`), ring/fence sizes and
-  H.264/HEVC/AV1 flags. Only `0x1638` enables `hasVCN0`; all other profiles stay off.
+  H.264/HEVC/AV1 flags. `0x1638` enables `hasVCN0`; the other VCN 2.x profiles now do too (experimental),
+  while VCN 1.x profiles stay off.
 - Phase 2 (firmware/PSP + 15.8.1 data): `tools/gen_vcn_kernel_data.py` derives the kernel vtable/getter
   ABI guards and 20 cross-driver call-site patches from the live 15.8.1 `SystemKernelExtensions.kc`;
   `NootedRed/VCNKernelData.hpp` is generated and self-checked. The existing `HWLibs` `ativvaxy_nv.dat`

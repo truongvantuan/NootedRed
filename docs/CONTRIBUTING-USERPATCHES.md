@@ -237,7 +237,9 @@ semantic correctness.
 ## Known limitations
 
 - The framework can select versions/families; 15.8.1 and 26.7.1 page data are present.
-- Multi-APU family entries share 15.8.1 data; only Renoir has been validated.
+- Multi-APU family entries share 15.8.1 data; only Renoir has been validated. The VDA engine is enabled in
+  the profile for every VCN 2.x APU (`0x1636`/`0x1638`/`0x164C`/`0x15E7`), but only `0x1638` is
+  hardware-validated; VCN 1.x APUs have no media path yet.
 - The resolver is merged but still prototype-grade: its 32-byte contexts are per-build data and the MTL
   signatures lack module filtering (hardening is Milestone 3 of the compatibility architecture).
 - Full RB+ enablement is not safe on Renoir with isolated HwInfo/golden patches; keep the conditional
