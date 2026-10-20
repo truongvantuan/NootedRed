@@ -115,6 +115,10 @@ keepsyms=1 debug=0x144 itlwm_he=1 -NRedGLFix
   失败即 no-op。
 - `-NRedGLFixResolveOnly`：仅用于 QA 测试——跳过整页镜像、只走 resolver，用来单独验证签名是否命中。
   日常使用不要加。
+- `-NRedGLFixSemanticMTL`：强制启用 Metal 的 semantic variant 扫描（共享缓存页，实验性）。GL 部分的
+  semantic 兜底只要加了 `-NRedGLFix` 就会自动启用；如果当前系统没有匹配的整页 PatchSet，Metal 扫描也会
+  自动启用，不需要这个参数。
+- `-NRedGLFixSemanticOff`：关闭 semantic 兜底，只保留整页镜像路径。
 
 ### 关于 resolver
 
@@ -122,6 +126,9 @@ keepsyms=1 debug=0x144 itlwm_he=1 -NRedGLFix
 - 默认行为不变：不匹配的版本仍然 no-op，只有显式加 `-NRedGLFixResolve` 才会尝试 resolver；
 - resolver 使用 32 字节上下文，仍可能受驱动内部指令重排影响，需要按目标版本实测；
 - MTL 签名目前还没有模块过滤，建议只在你自己验证过的系统上开启。
+- 另有 semantic 兜底（`GLFixSemanticData.hpp`）：不依赖整页镜像，按指令上下文匹配 GL A1/A2 站点；
+  14 / 15.8.1 / 26.7.1 的 GL 上下文已离线验证。它和 resolver 是两条独立路径，日志里出现
+  `Semantic patch applied` 即表示命中；详见 [`analysis/gl-semantic-patches.md`](../analysis/gl-semantic-patches.md)。
 
 ### 6. 保存并重启
 
@@ -216,8 +223,9 @@ ls -lt /Library/Logs/DiagnosticReports/Kernel_*.gpuRestart
 | --- | --- |
 | macOS 15.8.1 / Renoir | 已验证 |
 | macOS 15.8.1 / Raven、Raven2、Picasso | 代码可匹配，未实机验证 |
-| 其他 macOS 版本 | 没有页面数据，默认 no-op |
-| resolver fallback | 已合并进 master，默认关闭；需 `-NRedGLFixResolve`，模块过滤/语义校验待 M3 |
+| 其他 macOS 版本 | 有 semantic GL 兜底（14/15.8.1/26.7.1 上下文已验证）；没有匹配时 no-op |
+| resolver fallback | 已合并进 master，默认关闭；需 `-NRedGLFixResolve` |
+| semantic fallback | 已实现；GL 自动启用，无 PatchSet 的版本 Metal 自动启用；离线验证见 `analysis/gl-semantic-patches.md` |
 
 想在自己系统上使用其他版本，需要按 [贡献者文档](CONTRIBUTING-USERPATCHES.md) 生成页面数据，不能直接改版本号。
 
