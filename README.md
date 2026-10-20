@@ -49,6 +49,7 @@ along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowled
 - [Chromium/Electron fix usage](docs/Chromium-Fix-Usage.md) — end-user installation and rollback.
 - [Device profile / media capability layer](docs/Device-Profile.md) — graphics + future VDA capability model.
 - [Compatibility data collector](tools/README-collect-compat-data.md) — collect a target machine's drivers, patch sites, VDA data and capabilities for new macOS/APU support.
+- [Cross-build semantic patches](analysis/gl-semantic-patches.md) — how the semantic GL/Metal fallback works and how its data is validated.
 - [iGPU HwInfo / UBM research](docs/IGPU-HwInfo-Research-Plan.md) — research record on where the user-space
   driver gets iGPU hardware info and what the GL fix still needs.
 - [Tester guide](docs/TESTER-GUIDE.md) — archived resolver QA handoff checklist.
