@@ -24,6 +24,7 @@
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
 #include <DeviceProfile.hpp>
+#include <GLFixSemanticData.hpp>
 #include <NRed.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <UserPatches.hpp>
@@ -32,6 +33,7 @@
 #include <libkern/OSAtomic.h>
 #include <libkern/OSTypes.h>
 #include <mach/i386/vm_types.h>
+#include <sys/vnode.h>
 
 static UserPatches moduleInstance;
 
@@ -42,6 +44,8 @@ namespace
     const char* const kBootArgGLFixOff         = "-NRedGLFixOff";
     const char* const kBootArgGLFixResolve     = "-NRedGLFixResolve";
     const char* const kBootArgGLFixResolveOnly = "-NRedGLFixResolveOnly";
+    const char* const kBootArgGLFixSemanticMTL = "-NRedGLFixSemanticMTL";
+    const char* const kBootArgGLFixSemanticOff = "-NRedGLFixSemanticOff";
     const char* const kBootArgVDA              = "-NRedVDA";
 
     // The patch bytes and page images below are specific to one driver build, and the native backend hooks
@@ -983,6 +987,15 @@ void UserPatches::init()
     this->resolverEnabled = this->enabled
                             && (this->resolverOnly || checkKernelArgument(kBootArgGLFixResolve));
 
+    // The semantic backend is the generic cross-build fallback: it runs whenever the GL fix is enabled
+    // (exact page sets still win), unless explicitly disabled.  Metal context scanning covers the whole
+    // shared-cache range; it is forced on here with `-NRedGLFixSemanticMTL`, and enabled automatically
+    // later when no exact patch set matches the running build.
+    this->semanticPatches    = GLFixSemantic::kPatches;
+    this->semanticPatchCount = GLFixSemantic::kPatchCount;
+    this->semanticEnabled    = this->enabled && !checkKernelArgument(kBootArgGLFixSemanticOff);
+    this->semanticMTLEnabled = this->semanticEnabled && checkKernelArgument(kBootArgGLFixSemanticMTL);
+
     this->vdaEnabled = checkKernelArgument(kBootArgVDA);
 
     if (!this->enabled && !this->vdaEnabled) {
@@ -994,6 +1007,12 @@ void UserPatches::init()
         SYSLOG("UserPatch", "Enabling user-space GL driver patches (experimental)");
         if (this->resolverEnabled) {
             SYSLOG("UserPatch", "Resolver fallback enabled%s", this->resolverOnly ? " (resolver-only QA mode)" : "");
+        }
+        if (this->semanticEnabled) {
+            SYSLOG("UserPatch", "Semantic GL fallback enabled (generic across macOS builds)");
+        }
+        if (this->semanticMTLEnabled) {
+            SYSLOG("UserPatch", "Semantic Metal context scanning enabled (forced)");
         }
     }
     if (this->vdaEnabled) { SYSLOG("UserPatch", "Enabling user-space VDA driver patches (experimental)"); }
@@ -1068,6 +1087,14 @@ void UserPatches::selectPatchSet()
 
     SYSLOG("UserPatch", "No patch set matches macOS %u.%u / APU mask 0x%02X; not installing any user patches",
            version.major(), version.minor(), apus);
+
+    // Unknown build: the semantic backend is the whole fix.  GL scanning is already enabled with the
+    // feature; also enable the Metal variant groups here so a build without page data still gets the
+    // Chromium/ANGLE-Metal part of the fix.
+    if (this->semanticEnabled && !this->semanticMTLEnabled) {
+        this->semanticMTLEnabled = true;
+        SYSLOG("UserPatch", "Semantic Metal fallback enabled because no exact patch set matched");
+    }
 }
 
 void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t count)
@@ -1402,7 +1429,162 @@ void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOf
     }
 }
 
-void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffset)
+auto UserPatches::isGLDriverVnode(void* const vnode) const -> bool
+{
+    if (vnode == nullptr) { return false; }
+
+    const char* const name = vnode_getname(reinterpret_cast<vnode_t>(vnode));
+    if (name == nullptr) { return false; }
+
+    const char* const needle = "AMDRadeonX5000GLDriver";
+    bool found = false;
+    for (size_t index = 0; name[index] != '\0' && !found; index++) {
+        size_t needleIndex = 0;
+        while (needle[needleIndex] != '\0' && name[index + needleIndex] == needle[needleIndex]) { needleIndex++; }
+        found = needle[needleIndex] == '\0';
+    }
+
+    vnode_putname(name);
+    return found;
+}
+
+auto UserPatches::patchSemanticPage(const void* const data, void* const vnode, const bool cachePage) -> bool
+{
+    if (!this->semanticEnabled || data == nullptr || this->semanticPatches == nullptr) { return false; }
+
+    const auto* const bytes = static_cast<const UInt8*>(data);
+
+    auto matchSite = [&](const SemanticPatch& patch, size_t& site) -> bool {
+        if (patch.context == nullptr || patch.mask == nullptr || patch.find == nullptr || patch.replace == nullptr) {
+            return false;
+        }
+        if (patch.contextSize == 0 || patch.contextSize > kPageSize || patch.findSize == 0
+            || patch.findSize != patch.replaceSize || patch.siteOffset + patch.findSize > patch.contextSize)
+        {
+            return false;
+        }
+
+        int found = -1;
+        for (size_t offset = 0; offset + patch.contextSize <= kPageSize; offset++) {
+            if ((bytes[offset] & patch.mask[0]) != (patch.context[0] & patch.mask[0])) { continue; }
+
+            bool matches = true;
+            for (size_t index = 1; index < patch.contextSize; index++) {
+                if ((bytes[offset + index] & patch.mask[index]) != (patch.context[index] & patch.mask[index])) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (!matches) { continue; }
+            if (found >= 0) { return false; }
+            found = static_cast<int>(offset);
+        }
+
+        if (found < 0) { return false; }
+
+        const auto candidate = static_cast<size_t>(found) + patch.siteOffset;
+        if (candidate + patch.findSize > kPageSize) { return false; }
+        if (memcmp(bytes + candidate, patch.find, patch.findSize) != 0) { return false; }
+
+        // Instruction-form verification: the masked context is an anchor, the site itself must still be the
+        // instruction the semantic kind describes.
+        if (patch.kind == kSemanticGLHwInfo) {
+            if (patch.siteOffset < 6 || bytes[static_cast<size_t>(found) + patch.siteOffset - 6] != 0xC7) {
+                return false;
+            }
+        } else if (patch.kind == kSemanticGLDualQuad) {
+            if (candidate + 5 > kPageSize || bytes[candidate + 3] != 0x09 || bytes[candidate + 4] != 0xC8) {
+                return false;
+            }
+        }
+
+        site = candidate;
+        return true;
+    };
+
+    auto applySites = [&](const SemanticPatch* const* entries, const size_t* sites, const size_t count) -> bool {
+        if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) { return false; }
+
+        for (size_t index = 0; index < count; index++) {
+            memcpy(const_cast<UInt8*>(bytes) + sites[index], entries[index]->replace, entries[index]->replaceSize);
+        }
+
+        if (MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) {
+            SYSLOG("UserPatch", "Semantic: failed to restore kernel write protection");
+        }
+        return true;
+    };
+
+    bool patched = false;
+    bool glDriver = false;
+    bool glChecked = false;
+    size_t index = 0;
+    while (index < this->semanticPatchCount) {
+        const auto& first = this->semanticPatches[index];
+
+        if (first.cachePage) {
+            if (!cachePage || !this->semanticMTLEnabled) { index++; continue; }
+        } else if (cachePage) {
+            index++;
+            continue;
+        }
+
+        if (first.group == 0) {
+            size_t site = 0;
+            if (!matchSite(first, site)) { index++; continue; }
+
+            if (!first.cachePage) {
+                if (!glChecked) {
+                    glDriver  = this->isGLDriverVnode(vnode);
+                    glChecked = true;
+                }
+                if (!glDriver) { index++; continue; }
+            }
+
+            const SemanticPatch* entry = &first;
+            if (applySites(&entry, &site, 1)) {
+                patched = true;
+                NRed::singleton().setProp32("NRedGLFixSemantic", 1);
+                SYSLOG("UserPatch", "Semantic patch applied: %s at page offset 0x%zX", first.name, site);
+            }
+            index++;
+            continue;
+        }
+
+        // A group only applies when every site in it matches the same page.  That is what makes the Metal
+        // variants safe on the shared-cache range: a partial or foreign page is left untouched.
+        size_t end = index + 1;
+        while (end < this->semanticPatchCount && this->semanticPatches[end].group == first.group) { end++; }
+        if (end - index > 8) { index = end; continue; }
+
+        const SemanticPatch* entries[8]{};
+        size_t               sites[8]{};
+        bool                 groupMatched = true;
+        for (size_t entryIndex = index; entryIndex < end; entryIndex++) {
+            const auto& patch = this->semanticPatches[entryIndex];
+            if (!matchSite(patch, sites[entryIndex - index])) {
+                groupMatched = false;
+                break;
+            }
+            entries[entryIndex - index] = &patch;
+        }
+
+        if (groupMatched && applySites(entries, sites, end - index)) {
+            NRed::singleton().setProp32("NRedGLFixSemanticMetal", 1);
+            SYSLOG("UserPatch", "Semantic Metal group %u applied (%zu site(s))", first.group, end - index);
+            // Exactly one Metal variant applies per page; the Tahoe direct form is ordered before the
+            // gate/allow pair so a 26.x page takes the direct-field patch only.
+            return true;
+        }
+
+        index = end;
+    }
+
+    return patched;
+}
+
+void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffset, void* const vnode,
+                                  const bool cachePage)
 {
     if (data == nullptr) { return; }
 
@@ -1470,6 +1652,10 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
         if (this->isPatchedPage(this->nativePages[pageIndex], static_cast<const UInt8*>(data))) { return; }
     }
 
+    // Generic fallback: locate the sites by instruction context instead of a build-specific page image.
+    // This is what makes the GL fix work on macOS builds that have no page table entry.
+    if (this->patchSemanticPage(data, vnode, cachePage)) { return; }
+
     this->patchSignaturePage(data, pageOffset);
 }
 
@@ -1480,7 +1666,7 @@ void UserPatches::wrapCsValidatePage(void* const vnode, void* const pager, const
                                                                     nx);
 
     // Only patch pages that passed validation, so that a rejected page is never turned into a valid-looking one.
-    if (validated != nullptr && *validated != 0) { singleton().patchNativePage(data, pageOffset); }
+    if (validated != nullptr && *validated != 0) { singleton().patchNativePage(data, pageOffset, vnode, false); }
 }
 
 boolean_t UserPatches::wrapCsValidateRange(void* const vnode, void* const pager, const UInt64 pageOffset,
@@ -1493,7 +1679,7 @@ boolean_t UserPatches::wrapCsValidateRange(void* const vnode, void* const pager,
 
     const auto* const bytes = static_cast<const UInt8*>(data);
     for (size_t offset = 0; offset + kPageSize <= dataSize; offset += kPageSize) {
-        singleton().patchNativePage(bytes + offset, pageOffset + offset);
+        singleton().patchNativePage(bytes + offset, pageOffset + offset, vnode, true);
     }
 
     return result;
