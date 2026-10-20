@@ -44,6 +44,8 @@ along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowled
 
 - [Compatibility architecture](docs/Compatibility-Architecture.md) — multi-macOS × multi-APU design:
   target identity vs hardware capability, verification ladder, manifest pipeline and milestones.
+- [Patch architecture: GLFIX and VDA/VCN](docs/Patch-Architecture.md) — how the two patches work,
+  including every kernel/user-space modification and its safety gates.
 - [Contributing to UserPatches](docs/CONTRIBUTING-USERPATCHES.md) — architecture, adding macOS builds,
   APU families, patch-data generation, resolver rules, and testing checklist.
 - [Chromium/Electron fix usage](docs/Chromium-Fix-Usage.md) — end-user installation and rollback.

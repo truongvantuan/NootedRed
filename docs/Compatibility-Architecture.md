@@ -428,6 +428,7 @@ validated matrix; VCN1 either works on hardware or is explicitly unavailable.
 ## 11. References
 
 - [Contributing to UserPatches](CONTRIBUTING-USERPATCHES.md)
+- [Patch architecture: GLFIX and VDA/VCN](Patch-Architecture.md)
 - [Chromium/Electron fix usage](Chromium-Fix-Usage.md)
 - [Device profile / media capability layer](Device-Profile.md)
 - [`analysis/multi-os-multi-apu.md`](../analysis/multi-os-multi-apu.md)
