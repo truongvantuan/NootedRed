@@ -930,15 +930,23 @@ static const UInt8 kGLDriverDualQuadPage[] = {
     // macOS 26.7.1 (Darwin 25.6.0) GL driver.  The driver layout moved: _gfx9_HwInfoInitData is at
     // 0xDF80 and _glrAMD_GFX9_UpdateHwCbDualQuadMode at 0x819E, so the 15.8.1 page images cannot match.
     // Only the GL driver is covered here; the Metal 26.7.1 sites still need validation.
+    // macOS 26.7.1 Metal uses the same gate/allow pair as Sequoia; only the page image and the
+    // allow-pattern occurrence differ.  This matches the implementation that is known to be smooth on
+    // 26.7.1; the direct-field form is left in TahoePatchData.hpp for reference/experiments only.
+    static const UInt8 kTahoeMTLGateFind[]    = {0x74, 0x28};
+    static const UInt8 kTahoeMTLGateReplace[] = {0xEB, 0x00};
+    static const UInt8 kTahoeMTLAllowFind[]    = {0x0F, 0x94, 0xC1};
+    static const UInt8 kTahoeMTLAllowReplace[] = {0x31, 0xC9, 0x90};
+
     static const UserPatches::PagePatch kTahoeGLDriverPatches[] = {
         {UserPatcher::FileSegment::SegmentTextText, kTahoeGLHwInfoPage,    kGLDriverHwInfoFind,
          kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
         {UserPatcher::FileSegment::SegmentTextText, kTahoeGLDualQuadPage,  kGLDriverDualQuadFind,
          kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
-        // The Metal pipeline context moved the CB_COLOR_CONTROL boolean write to +0xE4; patch the
-        // direct boolean assignment (and edx,~1 -> or edx,1) rather than the old 15.8.1 gate/setz pair.
-        {UserPatcher::FileSegment::SegmentTextText, kTahoeMTLControlPage, kTahoeMTLDualQuadFind,
-         kTahoeMTLDualQuadReplace,                  sizeof(kTahoeMTLDualQuadFind), 0, 1},
+        {UserPatcher::FileSegment::SegmentTextText, kTahoeMTLControlPage,  kTahoeMTLGateFind,
+         kTahoeMTLGateReplace,                      sizeof(kTahoeMTLGateFind),     0, 1},
+        {UserPatcher::FileSegment::SegmentTextText, kTahoeMTLControlPage,  kTahoeMTLAllowFind,
+         kTahoeMTLAllowReplace,                     sizeof(kTahoeMTLAllowFind),    1, 1},
     };
     constexpr size_t kTahoeGLDriverPatchCount = arrsize(kTahoeGLDriverPatches);
 
@@ -1081,6 +1089,14 @@ void UserPatches::selectPatchSet()
         this->patchCount     = set.count;
         this->signatures     = set.signatures;
         this->signatureCount = set.signatureCount;
+        // An exact patch set is the complete fix for this build.  Keeping the semantic scanner active
+        // would still walk every validated page and can add measurable overhead (visible as stutter on
+        // 26.7.1); it is only a fallback for builds without page data.
+        if (this->semanticEnabled || this->semanticMTLEnabled) {
+            this->semanticEnabled    = false;
+            this->semanticMTLEnabled = false;
+            SYSLOG("UserPatch", "Exact patch set matched; semantic scanning disabled");
+        }
         SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
                version.major(), version.minor(), apus);
         return;
