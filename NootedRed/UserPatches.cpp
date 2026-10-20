@@ -47,6 +47,7 @@ namespace
     const char* const kBootArgGLFixSemanticMTL = "-NRedGLFixSemanticMTL";
     const char* const kBootArgGLFixSemanticOff = "-NRedGLFixSemanticOff";
     const char* const kBootArgVDA              = "-NRedVDA";
+    const char* const kBootArgAVC              = "-NRedAVC";
 
     // The patch bytes and page images below are specific to one driver build, and the native backend hooks
     // code signing page validation, so this is opt-in until the table has been filled in and tested.
@@ -996,7 +997,7 @@ void UserPatches::init()
     this->semanticEnabled    = this->enabled && !checkKernelArgument(kBootArgGLFixSemanticOff);
     this->semanticMTLEnabled = this->semanticEnabled && checkKernelArgument(kBootArgGLFixSemanticMTL);
 
-    this->vdaEnabled = checkKernelArgument(kBootArgVDA);
+    this->vdaEnabled = checkKernelArgument(kBootArgVDA) || checkKernelArgument(kBootArgAVC);
 
     if (!this->enabled && !this->vdaEnabled) {
         DBGLOG("UserPatch", "User-space driver patches are disabled");

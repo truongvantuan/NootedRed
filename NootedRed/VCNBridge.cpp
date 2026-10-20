@@ -47,11 +47,14 @@ namespace
 {
 
     const char* const kBootArgVDA = "-NRedVDA";
+    const char* const kBootArgAVC = "-NRedAVC";
 
-    // All generated data in this tree was derived from macOS 15.8.1 (24H32, Darwin 24.6.0).
+    // Kernel/user-space data is generated for macOS 15.8.1 (24H32, Darwin 24.6.0) and
+    // macOS 14.8.9 (23J631, Darwin 23.6.0).  The bridge selects the matching table set.
     bool isSupportedOS()
     {
-        return currentKernelVersion().major() == 24 && currentKernelVersion().minor() == 6;
+        return (currentKernelVersion().major() == 24 && currentKernelVersion().minor() == 6)
+            || (currentKernelVersion().major() == 23 && currentKernelVersion().minor() == 6);
     }
 
     // The build string is checked once the accelerator starts, not in NRed::init: the early kext-load
@@ -60,9 +63,13 @@ namespace
     {
         if (!isSupportedOS()) { return false; }
         // If the early-boot version string is not populated yet, the ABI guards are the remaining
-        // protection; once it is visible, require the exact 24H32 build.
+        // protection; once it is visible, require the matching minor release family (14.8.x -> 23J,
+        // 15.8.x -> 24H).  Every `original` call-site byte is still verified, so a sub-build with a
+        // different X6000 text is rejected rather than patched.
         if (osversion[0] == '\0') { return true; }
-        return strncmp(osversion, "24H32", 5) == 0;
+        if (currentKernelVersion().major() == 24) { return strncmp(osversion, "24H", 3) == 0; }
+        if (currentKernelVersion().major() == 23) { return strncmp(osversion, "23J", 3) == 0; }
+        return false;
     }
 
     bool isSupportedDevice()
@@ -164,14 +171,16 @@ VCNBridge& VCNBridge::singleton() { return moduleInstance; }
 
 void VCNBridge::init()
 {
-    this->requested = checkKernelArgument(kBootArgVDA);
+    this->requested = checkKernelArgument(kBootArgVDA) || checkKernelArgument(kBootArgAVC);
     if (!this->requested) {
-        DBGLOG("VCN", "VCN bridge is disabled; add -NRedVDA to opt in");
+        DBGLOG("VCN", "VCN bridge is disabled; add -NRedVDA or -NRedAVC to opt in");
         return;
     }
 
     if (!isSupportedOS()) {
-        SYSLOG("VCN", "VCN data is for macOS 15.8.1 (Darwin 24.6); -NRedVDA is ignored on this build");
+        SYSLOG("VCN",
+               "VCN data is for macOS 15.8.1 (Darwin 24.6) or 14.8.9 (Darwin 23.6); the hardware decode boot "
+               "argument is ignored on this build");
         this->requested = false;
         return;
     }
@@ -415,6 +424,7 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
 
     if (id == kextRadeonX5000.loadIndex) {
         NRed::singleton().setProp32("NRedVCNX5000Seen", 1);
+        NRed::singleton().setProp32("NRedVCNDataVariant", currentKernelVersion().major() == 23 ? 1 : 2);
         publishStage(2);
 
         if (!verifyKernelABI(patcher, id, slide, size, true)) {
@@ -553,12 +563,15 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
         }
 
         // Verify every generated call-site before touching any of them, then apply all-or-nothing.
-        mach_vm_address_t addresses[arrsize(VCNKernelData::CallPatches)]{};
+        // The per-build selector picks the Sonoma or Sequoia table; both have 20 sites.
+        size_t callPatchCount = 0;
+        const auto* const callPatches = VCNKernelData::getCallPatches(callPatchCount);
+        mach_vm_address_t addresses[VCNKernelData::kMaxCallPatches]{};
         mach_vm_address_t signal{0};
         if (!resolve(patcher, id, VCNKernelData::SignalSymbol, signal, slide, size)) { return; }
 
-        for (size_t i = 0; i < arrsize(VCNKernelData::CallPatches); ++i) {
-            const auto&       patch = VCNKernelData::CallPatches[i];
+        for (size_t i = 0; i < callPatchCount; ++i) {
+            const auto&       patch = callPatches[i];
             mach_vm_address_t function{0};
             if (!resolve(patcher, id, patch.symbol, function, slide, size)) { return; }
 
@@ -574,8 +587,8 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
 
         if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) { return; }
 
-        for (size_t i = 0; i < arrsize(VCNKernelData::CallPatches); ++i) {
-            const auto& patch = VCNKernelData::CallPatches[i];
+        for (size_t i = 0; i < callPatchCount; ++i) {
+            const auto& patch = callPatches[i];
             UInt8       replacement[6];
             memcpy(replacement, patch.original, sizeof(replacement));
             if (patch.newSlot != 0) { memcpy(replacement + 2, &patch.newSlot, sizeof(patch.newSlot)); }
@@ -601,9 +614,9 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
         if (!patcher.routeMultiple(id, routes, arrsize(routes), slide, size)) {
             patcher.clearError();
             if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) == KERN_SUCCESS) {
-                for (size_t i = 0; i < arrsize(VCNKernelData::CallPatches); ++i) {
-                    memcpy(reinterpret_cast<void*>(addresses[i]), VCNKernelData::CallPatches[i].original,
-                           sizeof(VCNKernelData::CallPatches[i].original));
+                for (size_t i = 0; i < callPatchCount; ++i) {
+                    memcpy(reinterpret_cast<void*>(addresses[i]), callPatches[i].original,
+                           sizeof(callPatches[i].original));
                 }
                 MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock);
             }
@@ -617,6 +630,7 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
 
         this->x6000Prepared = true;
         NRed::singleton().setProp32("NRedVCNX6000ABIValidated", 1);
-        SYSLOG("VCN", "X6000 VCN bridge prepared (%zu call-site patches)", arrsize(VCNKernelData::CallPatches));
+        SYSLOG("VCN", "X6000 VCN bridge prepared (%zu call-site patches, %s variant)", callPatchCount,
+               currentKernelVersion().major() == 23 ? "Sonoma" : "Sequoia");
     }
 }

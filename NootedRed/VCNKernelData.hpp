@@ -1,4 +1,4 @@
-// VCN kernel bridge data for macOS 15.8.1
+// VCN kernel bridge data for macOS 15.8.1 (Sequoia) and macOS 14.8.9 (Sonoma)
 //
 // Copyright (C) 2022-2026  ChefKiss.
 //
@@ -220,12 +220,161 @@ namespace VCNKernelData {
         },
     };
 
+    // macOS 14 (Sonoma) call-site patches, imported from the multi-OS fork weachy/NootedRed.
+    // Generated from macOS 14.8.9 (23J631); the X5000/X6000 vtable guards and getter bytes are shared
+    // with the 15.8.1 data and are still verified against the live kext before any patch is applied.
+    inline constexpr CallPatch CallPatches_Sonoma[] = {
+        {
+            "__ZN26AMDRadeonX6000_AMDHWEngine11waitForIdleEj",
+            0x1A,
+            { 0xFF, 0x90, 0xE0, 0x03, 0x00, 0x00 },
+            0x3E8,
+        },
+        {
+            "__ZN26AMDRadeonX6000_AMDHWEngine11waitForIdleEj",
+            0x84,
+            { 0xFF, 0x90, 0xE8, 0x03, 0x00, 0x00 },
+            0x3F0,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel11waitForIdleEj",
+            0x1A,
+            { 0xFF, 0x90, 0xE0, 0x03, 0x00, 0x00 },
+            0x3E8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel11waitForIdleEj",
+            0xF2,
+            { 0xFF, 0x90, 0xE8, 0x03, 0x00, 0x00 },
+            0x3F0,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel14waitForHwStampEj",
+            0xB2,
+            { 0xFF, 0x90, 0xA0, 0x02, 0x00, 0x00 },
+            0x298,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel16timestampUpdatedEv",
+            0x1A,
+            { 0xFF, 0x90, 0xB0, 0x03, 0x00, 0x00 },
+            0x3B8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel19submitCommandBufferEP30AMD_SUBMIT_COMMAND_BUFFER_INFO",
+            0x153,
+            { 0xFF, 0x90, 0x30, 0x02, 0x00, 0x00 },
+            0x0,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel20writeDiagnosisReportERPcRj",
+            0x538,
+            { 0xFF, 0x90, 0xB0, 0x03, 0x00, 0x00 },
+            0x3B8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel20writeDiagnosisReportERPcRj",
+            0x7B6,
+            { 0xFF, 0x90, 0xB0, 0x03, 0x00, 0x00 },
+            0x3B8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel20writeDiagnosisReportERPcRj",
+            0x9D1,
+            { 0xFF, 0x90, 0xC0, 0x03, 0x00, 0x00 },
+            0x3C8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel24enableTimestampInterruptEv",
+            0x74,
+            { 0xFF, 0x90, 0xA0, 0x02, 0x00, 0x00 },
+            0x298,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel4initEiP30AMDRadeonX6000_IAMDHWInterfaceP27AMDRadeonX6000_IAMDHWEngineP25AMDRadeonX6000_IAMDHWRingPKc",
+            0x1F5,
+            { 0xFF, 0x90, 0xB0, 0x03, 0x00, 0x00 },
+            0x3B8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel4initEiP30AMDRadeonX6000_IAMDHWInterfaceP27AMDRadeonX6000_IAMDHWEngineP25AMDRadeonX6000_IAMDHWRingPKc",
+            0x2AD,
+            { 0xFF, 0x90, 0xC0, 0x03, 0x00, 0x00 },
+            0x3C8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel4initEiP30AMDRadeonX6000_IAMDHWInterfaceP27AMDRadeonX6000_IAMDHWEngineP25AMDRadeonX6000_IAMDHWRingPKc",
+            0x2CF,
+            { 0xFF, 0x90, 0xC0, 0x03, 0x00, 0x00 },
+            0x3C8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel4initEiP30AMDRadeonX6000_IAMDHWInterfaceP27AMDRadeonX6000_IAMDHWEngineP25AMDRadeonX6000_IAMDHWRingPKc",
+            0x2F1,
+            { 0xFF, 0x90, 0xC0, 0x03, 0x00, 0x00 },
+            0x3C8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel4initEiP30AMDRadeonX6000_IAMDHWInterfaceP27AMDRadeonX6000_IAMDHWEngineP25AMDRadeonX6000_IAMDHWRingPKc",
+            0x315,
+            { 0xFF, 0x90, 0xC0, 0x03, 0x00, 0x00 },
+            0x3C8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel4initEiP30AMDRadeonX6000_IAMDHWInterfaceP27AMDRadeonX6000_IAMDHWEngineP25AMDRadeonX6000_IAMDHWRingPKc",
+            0x339,
+            { 0xFF, 0x90, 0xC0, 0x03, 0x00, 0x00 },
+            0x3C8,
+        },
+        {
+            "__ZN27AMDRadeonX6000_AMDHWChannel5resetEv",
+            0x5A,
+            { 0xFF, 0x90, 0xB0, 0x03, 0x00, 0x00 },
+            0x3B8,
+        },
+        {
+            "__ZN30AMDRadeonX6000_AMDVCN2HWEngine6isIdleEv",
+            0x33,
+            { 0xFF, 0x90, 0xA0, 0x02, 0x00, 0x00 },
+            0x298,
+        },
+        {
+            "__ZN36AMDRadeonX6000_AMDNavi10VideoContext21setSuspendResumeStateEb",
+            0x27,
+            { 0xFF, 0x90, 0xB0, 0x02, 0x00, 0x00 },
+            0x2A8,
+        },
+    };
+
     inline constexpr char SignalSymbol[] = "__ZN26AMDRadeonX6000_AMDHardware22signalGPUWorkSubmittedEv";
+
+    // Both variants carry 20 sites; the bridge uses kMaxCallPatches for its fixed address array.
+    inline constexpr size_t kMaxCallPatches = 20;
+
+    // Select the per-build call-site table.  The bridge additionally verifies every `original` byte
+    // before writing, so a mismatched build is rejected instead of patched.
+    inline const CallPatch* getCallPatches(size_t& count)
+    {
+        if (currentKernelVersion().major() == 23) {
+            count = sizeof(CallPatches_Sonoma) / sizeof(CallPatches_Sonoma[0]);
+            return CallPatches_Sonoma;
+        }
+
+        count = sizeof(CallPatches) / sizeof(CallPatches[0]);
+        return CallPatches;
+    }
 
     inline constexpr char SourceDescription[] =
         "macOS 15.8.1 (24H32) x86_64, Darwin 24.6.0; "
         "SystemKernelExtensions.kc UUID 32F6A74A-0627-D0F9-6048-58AF2F562E12; "
         "AMDRadeonX5000 7.0.25 24657; AMDRadeonX6000 7.0.25 24657";
+
+    // Sonoma call-site table provenance.  The vtable guard/getter arrays are shared with the Sequoia
+    // table and are verified against the live kexts before any write; a layout change makes the bridge
+    // fail closed instead of patching the wrong slots.
+    inline constexpr char SourceDescriptionSonoma[] =
+        "macOS 14.8.9 (23J631) x86_64, Darwin 23.6.0; 20 X6000 call-site patches imported from the "
+        "multi-OS fork weachy/NootedRed; vtable guards/getters shared with the 15.8.1 data";
 
     // Source identity for runtime diagnostics; the bridge must compare these against
     // the loaded kernel collection/kexts before installing any guard or patch.
