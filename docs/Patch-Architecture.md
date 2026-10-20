@@ -1,5 +1,8 @@
 # Patch architecture: GLFIX and VDA/VCN
 
+Historical combined 0.9.1 description. For current 0.9.2 selection, semantic scanning and exact VCN
+build gates, see [Combined-Fork.md](Combined-Fork.md). The root-patch redesign remains a proposal.
+
 This document describes the two NootedRed features that patch Apple's user-space and kernel drivers:
 
 1. **GLFIX** — the Chromium/Electron OpenGL/Metal dual-source fix.

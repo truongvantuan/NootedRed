@@ -10,7 +10,7 @@ reference. It never edits files, never injects code, never opens a window and
 never takes over the display. **It is still a GPU test on a machine whose GPU is
 currently misbehaving — read the safety section before running it.**
 
-Related documents: `analysis/repro-plan.md` (full evidence + repro plan),
+Related local documents: `analysis/repro-plan.md` (full evidence + repro plan),
 `Chromium-OpenGL-Issue-Report.md` (prior analysis, repository root).
 
 ## Files
@@ -130,10 +130,10 @@ Notes:
 ## What this harness does not do
 
 - It does not run Chromium/ANGLE; use a real Electron/Chromium app for that
-  (see `analysis/repro-plan.md` §4.8 for the app-level ladder).
+  (see the local `analysis/repro-plan.md` §4.8 for the app-level ladder).
 - It does not patch or validate any candidate fix. Patch validation is
   approval-gated and should start with the user-space interposer described in
-  `analysis/repro-plan.md` §4.7.
+  local `analysis/repro-plan.md` §4.7.
 - It does not read or write system files, kexts or the dyld shared cache.
 
 ## Recovery notes

@@ -229,8 +229,8 @@ private:
     bool                  resolverOnly{false};
 
     // Generic semantic backend.  GL entries are enabled together with the GL fix and only patch the
-    // vnode-backed AMDRadeonX5000GLDriver. Metal scanning is automatic without a version-matched patch set,
-    // or explicitly enabled with -NRedGLFixSemanticMTL.
+    // vnode-backed AMDRadeonX5000GLDriver. A version-matched patch set disables semantic scanning unless
+    // explicitly requested with -NRedGLFixSemanticMTL. Without one, Metal fallback is automatic.
     const SemanticPatch* semanticPatches{nullptr};
     size_t               semanticPatchCount{0};
     bool                 semanticEnabled{false};

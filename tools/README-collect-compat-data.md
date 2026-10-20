@@ -59,7 +59,7 @@ chromium/
 vda/
   kernel-info.json                                    KC + X5000/X6000 UUIDs, versions and segment hashes
   kernel-abi.json                                     guards / call-site tables (when derivable)
-  generated/                                          VCNKernelData.hpp, VDAVAData.hpp, VDAGVAData.hpp
+  generated/                                          VCNData/24H32.hpp, VDAVAData.hpp, VDAGVAData.hpp
   generator-results.json                              exit codes, stdout/stderr; --check fallback verdicts
   firmware/                                           on-disk AMD firmware blobs, when available
 ```

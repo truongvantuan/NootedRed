@@ -49,6 +49,7 @@ jobs:
           python3 tools/test_patchset_selection.py
           python3 tools/test_gl_semantic_data.py
           python3 tools/test_patch_dispatch.py
+          python3 tools/test_vcn_multibuild.py
 
       - name: Verify and stage release
         run: |

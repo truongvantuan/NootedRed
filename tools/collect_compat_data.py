@@ -726,13 +726,14 @@ def collect_vda(root: Path, cache_dir: Path | None, warnings: list[str],
     if include_generators:
         # (header name, generator script, output flag, committed header in the repo)
         generator_specs = (
-            ("VCNKernelData.hpp", "gen_vcn_kernel_data.py", "--output"),
+            ("VCNData/24H32.hpp", "gen_vcn_kernel_data.py", "--output"),
             ("VDAVAData.hpp", "gen_vda_va_data.py", "--output"),
             ("VDAGVAData.hpp", "gen_vda_gva_data.py", "--header"),
         )
         for name, script, output_flag in generator_specs:
             script_path = TOOLS_DIR / script
             output_path = generated / name
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             committed = REPO_ROOT / "NootedRed" / name
 
             # The VA generator recovers the stock (unpatched) cache page from the committed header.

@@ -306,6 +306,9 @@ illustrative until Milestone 4):
 | 15.8.1 (24H32) | Renoir `0x1638` | GL/Metal fix | validated | `analysis/hwinfo-capability-source.md` |
 | 15.8.1 (24H32) | Renoir `0x1638` | VDA decode/encode | validated (`-NRedVDA`, default off) | `analysis/vda-1581-hardware-validation.md` |
 | 15.8.1 (24H32) | other VCN 2.x APUs (`0x1636`/`0x164C`/`0x15E7`) | VDA decode/encode | experimental (profile enables VCN0; bridge/ABI gates still apply) | `DeviceProfile` media policy |
+| 14.8.9 (23J631) | Renoir `0x1638` | VDA decode/encode | data integrated, not hardware-validated (`-NRedVDA`/`-NRedAVC`) | `analysis/vcn-multiversion.md` |
+| 14.8.9 (23J631) | other VCN 2.x APUs (`0x1636`/`0x164C`/`0x15E7`) | VDA decode/encode | experimental (profile enables VCN0; ABI/call-site gates) | `analysis/vcn-multiversion.md` |
+| 26.x | any | VDA | unavailable | no VCN data generated; bridge rejects |
 | 26.7.1 | `0x1638`/`0x164c` | GL/Metal fix | experimental | `feature/tahoe-26.7.1` data, unverified |
 | 14.x / 15.8.1 / 26.7.1 | any gfx9 APU | GL fix (A1/A2) | semantic fallback validated offline | `analysis/gl-semantic-patches.md` |
 | 14.x / 15.8.1 / 26.7.1 | any gfx9 APU | Metal fix | semantic variants, experimental | Metal contexts per known build; 26.x uses the direct-field variant |

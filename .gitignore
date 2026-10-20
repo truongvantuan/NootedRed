@@ -38,6 +38,10 @@ venv/
 # ---------------------------------------------------------------------------
 /AGENTS.md
 
+# New machine-local research notes; existing tracked research remains in history.
+/analysis/
+/Chromium-OpenGL-Issue-Report.md
+
 # ---------------------------------------------------------------------------
 # macOS
 # ---------------------------------------------------------------------------

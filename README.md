@@ -13,9 +13,6 @@
 
 The macOS kernel extension for GPU bug fixes, QoL improvements, and extended hardware support.
 
-This repository's **0.9.1 combined fork** integrates Weachy's Sonoma/VDA work and xiaot-evo's semantic
-GL/Metal fallback. See [combined-fork usage, boot arguments and provenance](docs/Combined-Fork.md).
-
 ```
 Copyright (C) 2022-2026  ChefKiss
 
@@ -45,22 +42,21 @@ along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowled
 
 ## Documentation
 
-- [Compatibility architecture](docs/Compatibility-Architecture.md) — multi-macOS × multi-APU design:
-  target identity vs hardware capability, verification ladder, manifest pipeline and milestones.
-- [Patch architecture: GLFIX and VDA/VCN](docs/Patch-Architecture.md) — how the two patches work,
-  including every kernel/user-space modification and its safety gates.
-- [Contributing to UserPatches](docs/CONTRIBUTING-USERPATCHES.md) — architecture, adding macOS builds,
-  APU families, patch-data generation, resolver rules, and testing checklist.
-- [Chromium/Electron fix usage](docs/Chromium-Fix-Usage.md) — end-user installation and rollback.
-- [Device profile / media capability layer](docs/Device-Profile.md) — graphics + future VDA capability model.
-- [Compatibility data collector](tools/README-collect-compat-data.md) — collect a target machine's drivers, patch sites, VDA data and capabilities for new macOS/APU support.
-- [Cross-build semantic patches](analysis/gl-semantic-patches.md) — how the semantic GL/Metal fallback works and how its data is validated.
-- [iGPU HwInfo / UBM research](docs/IGPU-HwInfo-Research-Plan.md) — research record on where the user-space
-  driver gets iGPU hardware info and what the GL fix still needs.
-- [Tester guide](docs/TESTER-GUIDE.md) — archived resolver QA handoff checklist.
-- [GL probe and reproduction notes](tools/README.md) — CGL/OpenGL dual-source probe and the evidence ladder.
-- [HW-info probe](tools/README-hwinfo-probe.md) — IOKit probe for the UBM hardware-info blob.
-- [Chromium/OpenGL issue report](Chromium-OpenGL-Issue-Report.md) — original issue write-up behind the fix.
+- [Combined fork 0.9.2](docs/Combined-Fork.md) — current runtime behavior, integrated revisions,
+  boot arguments, build instructions, and local hardware findings.
+- [Architecture proposal](docs/ARCHITECTURE.md) — upstream's proposed kernel/root-patch separation;
+  the root patcher is not implemented or distributed in this version.
+- [Compatibility matrix](docs/COMPATIBILITY.md) — per-build, per-APU status for GLFIX, VDA/VCN, and what
+  macOS 26 does and does not support today.
+- [Root patch pipeline](docs/ROOT-PATCH-PIPELINE.md) — design of the companion user-space patcher:
+  versioned payloads, manifests, APFS snapshot install/revert, KDK/kmutil/cache handling and CI gates.
+- [Build artifacts](docs/Build-Artifacts.md) — kext build layout and artifact locations.
+- [Platform data index](docs/Platform-Data-Index.md) — collected platform data used to derive payloads.
+- [Compatibility data collector](tools/README-collect-compat-data.md) — collect a target machine's
+  drivers, kernel data, VDA data and capabilities for a new macOS/APU payload.
+- [Archived documentation](docs/archive/README.md) — historical in-memory patching documents, kept for
+  reference only.
+- Existing research notes remain under `analysis/`; new machine-local notes are ignored by Git.
 
 ## Build artifacts
 

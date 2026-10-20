@@ -1,5 +1,16 @@
 # Change log
 
+## v0.9.2 — xiaot-evo update (2026-10-20)
+
+- Merge xiaot-evo `348948e` after its history rewrite, preserving Weachy's automatic resolver and local compiler fixes.
+- Replace the known Tahoe Metal page's experimental direct-field patch with the upstream gate/allow pair.
+- Disable semantic scanning for version/APU-matched native sets by default, retaining the explicit semantic QA override.
+- Split VCN kernel data by build and require exact `23J631` or `24H32`; publish variant/identity diagnostics.
+- Preserve AVC-only mode and Weachy's OS-family data; add compiled selector/dispatch regression checks.
+- Timestamp new build archives without renaming older artifacts; update Xcode source membership for VCNData.cpp.
+- Import compatibility and architecture documentation, identifying the root-patch redesign as a proposal.
+- No claim to repair the Renoir compute hang: it reproduced in 0.9.1 with both optional features disabled.
+
 ## v0.9.1 — combined fork (2026-10-20)
 
 - Merge Weachy `ea71183` and xiaot-evo `11dac5c`, retaining local compiler and CI fixes.

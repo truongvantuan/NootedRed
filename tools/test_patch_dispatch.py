@@ -60,12 +60,39 @@ const char* args = "";
 bool checkKernelArgument(const char* arg) {
     return (std::string(" ") + args + " ").find(std::string(" ") + arg + " ") != std::string::npos;
 }
+namespace PenguinWizardry {
+struct KernelVersion {
+    UInt32 maj, min;
+    constexpr KernelVersion(UInt32 a, UInt32 b) : maj(a), min(b) {}
+    UInt32 major() const { return maj; }
+    UInt32 minor() const { return min; }
+    bool operator<(const KernelVersion& b) const { return maj < b.maj || (maj == b.maj && min < b.min); }
+    bool operator>(const KernelVersion& b) const { return b < *this; }
+};
+}
+enum class KernelVersion { Sonoma = 23, Sequoia = 24, Tahoe = 25 };
+PenguinWizardry::KernelVersion version(23, 6);
+auto currentKernelVersion() { return version; }
+auto getKernelVersion() { return static_cast<KernelVersion>(version.major()); }
 constexpr bool kGLFixDefaultEnabled = false;
-const int kGLDriverPatchSets[] = {0};
-constexpr size_t kGLDriverPatchSetCount = 1;
+const int kGLDriverPatches_Sonoma[] = {23}, kGLDriverPatches_Sequoia[] = {24}, kGLDriverPatches_Tahoe[] = {25};
+constexpr size_t kGLDriverPatchCount_Sonoma = 1, kGLDriverPatchCount_Sequoia = 1, kGLDriverPatchCount_Tahoe = 1;
+const int kResolverSignatures[] = {24}, kResolverSignatures_Sonoma[] = {23};
+constexpr size_t kResolverSignatureCount = 1, kResolverSignatureCount_Sonoma = 1;
 namespace GLFixSemantic { const int kPatches[] = {0}; constexpr size_t kPatchCount = 1; }
 class UserPatches {
 public:
+    using ApuMask = UInt8;
+    static constexpr ApuMask kApuAll = 0x3F;
+    struct PatchSet {
+        const char* name;
+        PenguinWizardry::KernelVersion minVersion, maxVersion;
+        ApuMask apus;
+        const int* patches;
+        size_t count;
+        const int* signatures;
+        size_t signatureCount;
+    };
     static constexpr size_t kPageSize = 4096;
     struct NativeSite { size_t offset; const UInt8* find; const UInt8* replace; size_t size; };
     struct NativePage {
@@ -77,8 +104,10 @@ public:
     };
     const int* patches = nullptr;
     size_t patchCount = 0;
-    const int* patchSets = nullptr;
+    const PatchSet* patchSets = nullptr;
     size_t patchSetCount = 0;
+    const int* signatures = nullptr;
+    size_t signatureCount = 0, signatureApplied[8]{};
     const int* semanticPatches = nullptr;
     size_t semanticPatchCount = 0;
     NativePage nativePages[1]{};
@@ -89,6 +118,8 @@ public:
     bool semanticEnabled = false, semanticMTLEnabled = false, semanticResult = false;
     int resolverCalls = 0, semanticCalls = 0;
     void init();
+    void selectPatchSet();
+    ApuMask currentApuMask() const { return kApuAll; }
     void patchNativePage(const void*, UInt64, void*, bool);
     auto isPatchedPage(const NativePage&, const UInt8*) const -> bool;
     void patchSignaturePage(const void*, UInt64) { if (resolverEnabled) resolverCalls++; }
@@ -98,12 +129,26 @@ public:
         return semanticResult;
     }
 };
+const UserPatches::PatchSet kGLDriverPatchSets[] = {
+    {"Sonoma", {23, 0}, {23, 99}, UserPatches::kApuAll, kGLDriverPatches_Sonoma, 1, kResolverSignatures_Sonoma, 1},
+    {"Sequoia", {24, 6}, {24, 6}, UserPatches::kApuAll, kGLDriverPatches_Sequoia, 1, kResolverSignatures, 1},
+    {"Tahoe", {25, 6}, {25, 6}, UserPatches::kApuAll, kGLDriverPatches_Tahoe, 1, nullptr, 0},
+};
+constexpr size_t kGLDriverPatchSetCount = 3;
 void require(bool condition, const char* label) {
     if (!condition) { std::fprintf(stderr, "FAIL: %s\n", label); std::exit(1); }
 }
 '''
 
 CASES = r'''
+void selection(const char* input, UInt32 major, UInt32 minor, bool semantic, bool metal, const int* patches) {
+    args = input;
+    version = {major, minor};
+    UserPatches p;
+    p.init();
+    p.selectPatchSet();
+    require(p.semanticEnabled == semantic && p.semanticMTLEnabled == metal && p.patches == patches, input);
+}
 void options(const char* input, bool gl, bool vda, bool resolver, bool semantic, bool metal, bool qa) {
     args = input;
     UserPatches p;
@@ -127,6 +172,17 @@ int main() {
     options("-NRedGLFix -NRedAVC", true, true, true, true, false, false);
     options("-NRedGLFix -NRedGLFixOff -NRedVDA", false, true, false, false, false, false);
     options("-NRedGLFixResolve -NRedGLFixSemanticMTL", false, false, false, false, false, false);
+
+    selection("-NRedGLFix", 23, 6, false, false, kGLDriverPatches_Sonoma);
+    selection("-NRedGLFix", 24, 6, false, false, kGLDriverPatches_Sequoia);
+    selection("-NRedGLFix", 25, 6, false, false, kGLDriverPatches_Tahoe);
+    selection("-NRedGLFix", 24, 7, true, true, kGLDriverPatches_Sequoia);
+    selection("-NRedGLFix", 25, 7, true, true, kGLDriverPatches_Tahoe);
+    selection("-NRedGLFix -NRedGLFixSemanticMTL", 23, 6, true, true, kGLDriverPatches_Sonoma);
+    selection("-NRedGLFix -NRedGLFixSemanticMTL -NRedGLFixSemanticOff", 23, 6, false, false, kGLDriverPatches_Sonoma);
+    selection("-NRedGLFix -NRedGLFixSemanticOff", 24, 7, false, false, kGLDriverPatches_Sequoia);
+    selection("-NRedGLFix -NRedGLFixResolveOff", 23, 6, false, false, kGLDriverPatches_Sonoma);
+    selection("-NRedVDA", 24, 7, false, false, kGLDriverPatches_Sequoia);
 
     UInt8 stock[4096], data[4096], find = 0x11, replace = 0x22;
     std::memset(stock, 0xA5, sizeof(stock));
@@ -192,7 +248,7 @@ int main() {
         require(data[32] == replace && p.vdaAppliedCount == 1,
                 "video-only mode works with all graphics fallbacks disabled");
     }
-    std::puts("passed 14 boot-argument cases and 8 production page-dispatch checks");
+    std::puts("passed 14 boot-argument, 10 semantic selection and 8 production page-dispatch checks");
 }
 '''
 
@@ -201,7 +257,7 @@ def main():
     source = (ROOT / "NootedRed/UserPatches.cpp").read_text()
     constants = "\n".join(re.findall(r'const char\* const kBootArg\w+\s*=\s*"[^"]+";', source))
     bodies = "\n".join(method(source, signature) for signature in (
-        "void UserPatches::init()", "auto UserPatches::isPatchedPage(",
+        "void UserPatches::init()", "void UserPatches::selectPatchSet()", "auto UserPatches::isPatchedPage(",
         "void UserPatches::patchNativePage("))
     with tempfile.TemporaryDirectory(prefix="nred-dispatch-") as directory:
         path = Path(directory)

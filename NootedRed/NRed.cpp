@@ -56,23 +56,18 @@
 #include <libkern/c++/OSMetaClass.h>
 #include <mach/i386/vm_types.h>
 
-// Generated 15.8.1 user-space VDA patch tables.  They are produced by tools/gen_vda_*_data.py and are
-// committed with this branch; the VCN bridge itself does not depend on them, but VDA user-space patching
-// is a no-op if they are absent.
+// Generated user-space VDA patch tables, one set per supported macOS build.  The 15.8.1 set is produced
+// by tools/gen_vda_*_data.py in this tree; the 14.8.9 set is imported from the multi-OS fork
+// weachy/NootedRed and generated there by the same pipeline.  VDA user-space patching is a no-op if the
+// selected set is absent.
 #if __has_include(<VDAVADataSonoma.hpp>)
 #include <VDAVADataSonoma.hpp>
-#endif
-#if __has_include(<VDAVADataSequoia.hpp>)
-#include <VDAVADataSequoia.hpp>
 #endif
 #if __has_include(<VDAVAData.hpp>)
 #include <VDAVAData.hpp>
 #endif
 #if __has_include(<VDAGVADataSonoma.hpp>)
 #include <VDAGVADataSonoma.hpp>
-#endif
-#if __has_include(<VDAGVADataSequoia.hpp>)
-#include <VDAGVADataSequoia.hpp>
 #endif
 #if __has_include(<VDAGVAData.hpp>)
 #include <VDAGVAData.hpp>
@@ -92,30 +87,34 @@ void NRed::init()
 
     Backlight::singleton().init();
 
-    if (getKernelVersion() == KernelVersion::Sonoma) {
+    // Select the user-space VDA table set for the running Darwin generation.  The bridge separately
+    // rejects builds it has no kernel/ABI data for, so an unsupported major version only leaves these
+    // tables unregistered (no-op).
+    if (currentKernelVersion().major() == 23) {
 #if __has_include(<VDAVADataSonoma.hpp>)
-        if constexpr (arrsize(VDAVADataSonoma::Patches) > 0) {
-            UserPatches::singleton().registerVDAFix(VDAVADataSonoma::Patches,
-                                                    arrsize(VDAVADataSonoma::Patches));
+        if constexpr (sizeof(VDAVADataSonoma::Patches) / sizeof(VDAVADataSonoma::Patches[0]) > 0) {
+            UserPatches::singleton().registerVDAFix(
+                VDAVADataSonoma::Patches, sizeof(VDAVADataSonoma::Patches) / sizeof(VDAVADataSonoma::Patches[0]));
         }
 #endif
 #if __has_include(<VDAGVADataSonoma.hpp>)
-        if constexpr (arrsize(VDAGVADataSonoma::Patches) > 0) {
-            UserPatches::singleton().registerVDAFix(VDAGVADataSonoma::Patches,
-                                                    arrsize(VDAGVADataSonoma::Patches));
+        if constexpr (sizeof(VDAGVADataSonoma::Patches) / sizeof(VDAGVADataSonoma::Patches[0]) > 0) {
+            UserPatches::singleton().registerVDAFix(
+                VDAGVADataSonoma::Patches, sizeof(VDAGVADataSonoma::Patches) / sizeof(VDAGVADataSonoma::Patches[0]));
         }
 #endif
-    } else if (getKernelVersion() >= KernelVersion::Sequoia) {
-#if __has_include(<VDAVADataSequoia.hpp>)
-        if constexpr (arrsize(VDAVADataSequoia::Patches) > 0) {
-            UserPatches::singleton().registerVDAFix(VDAVADataSequoia::Patches,
-                                                    arrsize(VDAVADataSequoia::Patches));
+    }
+    else if (currentKernelVersion().major() == 24) {
+#if __has_include(<VDAVAData.hpp>)
+        if constexpr (sizeof(VDAVAData::Patches) / sizeof(VDAVAData::Patches[0]) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAVAData::Patches,
+                                                    sizeof(VDAVAData::Patches) / sizeof(VDAVAData::Patches[0]));
         }
 #endif
-#if __has_include(<VDAGVADataSequoia.hpp>)
-        if constexpr (arrsize(VDAGVADataSequoia::Patches) > 0) {
-            UserPatches::singleton().registerVDAFix(VDAGVADataSequoia::Patches,
-                                                    arrsize(VDAGVADataSequoia::Patches));
+#if __has_include(<VDAGVAData.hpp>)
+        if constexpr (sizeof(VDAGVAData::Patches) / sizeof(VDAGVAData::Patches[0]) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAGVAData::Patches,
+                                                    sizeof(VDAGVAData::Patches) / sizeof(VDAGVAData::Patches[0]));
         }
 #endif
     }

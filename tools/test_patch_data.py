@@ -192,6 +192,13 @@ def main():
     signatures = check_signatures(arrays, text)
     sets = check_patch_sets(text)
 
+    tahoe_table = re.search(r"kGLDriverPatches_Tahoe\[\]\s*=\s*\{(.*?)\n    \};", text, re.S)
+    check(tahoe_table is not None, "missing Tahoe patch table")
+    check("kTahoeMTLGateFind" in tahoe_table.group(1), "Tahoe table is missing the gate patch")
+    check("kTahoeMTLAllowFind" in tahoe_table.group(1), "Tahoe table is missing the allow patch")
+    check("kTahoeMTLDualQuadFind" not in tahoe_table.group(1),
+          "Tahoe table must not use the experimental direct-field Metal form")
+
     print(f"ok: {patches} page patch(es), {signatures} resolver signature(s), {sets} patch set(s)")
     print("all user-space patch data checks passed")
 

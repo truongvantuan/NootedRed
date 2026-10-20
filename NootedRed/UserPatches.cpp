@@ -27,7 +27,6 @@
 #include <GLFixSemanticData.hpp>
 #include <NRed.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
-#include <TahoePatchData.hpp>
 #include <UserPatches.hpp>
 #include <VCNBridge.hpp>
 #include <libkern/OSAtomic.h>
@@ -192,15 +191,21 @@ namespace
     };
     constexpr size_t kGLDriverPatchCount_Sequoia = arrsize(kGLDriverPatches_Sequoia);
 
+    // 26.7.1 uses upstream's gate/allow strategy; the direct-field form remains experimental.
+    static const UInt8 kTahoeMTLGateFind[]    = {0x74, 0x28};
+    static const UInt8 kTahoeMTLGateReplace[] = {0xEB, 0x00};
+    static const UInt8 kTahoeMTLAllowFind[]   = {0x0F, 0x94, 0xC1};
+    static const UInt8 kTahoeMTLAllowReplace[] = {0x31, 0xC9, 0x90};
+
     static const UserPatches::PagePatch kGLDriverPatches_Tahoe[] = {
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverHwInfoPage_Tahoe,    kGLDriverHwInfoFind,
          kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverDualQuadPage_Tahoe,  kGLDriverDualQuadFind,
          kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
-        // Prefer xiaot-evo's direct-field Metal fix on the known Tahoe page. The semantic backend
-        // retains Weachy's gate/allow variant for driver pages without this direct form.
-        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Tahoe,        kTahoeMTLDualQuadFind,
-         kTahoeMTLDualQuadReplace,                  sizeof(kTahoeMTLDualQuadFind), 0, 1},
+        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Tahoe,        kTahoeMTLGateFind,
+         kTahoeMTLGateReplace,                      sizeof(kTahoeMTLGateFind),     0, 1},
+        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Tahoe,        kTahoeMTLAllowFind,
+         kTahoeMTLAllowReplace,                     sizeof(kTahoeMTLAllowFind),    1, 1},
     };
     constexpr size_t kGLDriverPatchCount_Tahoe = arrsize(kGLDriverPatches_Tahoe);
 
@@ -349,6 +354,14 @@ void UserPatches::selectPatchSet()
         this->signatures     = set.signatures;
         this->signatureCount = set.signatureCount;
         for (auto& applied : this->signatureApplied) { applied = 0; }
+        // Avoid walking every validated page with the semantic backend when a native set exists.
+        // Preserve the explicit semantic QA override; SemanticOff still takes precedence in init().
+        if ((this->semanticEnabled || this->semanticMTLEnabled)
+            && !checkKernelArgument(kBootArgGLFixSemanticMTL)) {
+            this->semanticEnabled = false;
+            this->semanticMTLEnabled = false;
+            SYSLOG("UserPatch", "Exact patch set matched; semantic scanning disabled");
+        }
         SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
                version.major(), version.minor(), apus);
         return;

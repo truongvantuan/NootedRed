@@ -62,8 +62,9 @@ The media capability data is populated for every family. The engine flags are en
 the VCN 2.x profiles (Renoir, Renoir/Green Sardine, Cezanne and Barcelo) set `hasVCN0` so the same VDA
 implementation can be tried on every VCN 2.x APU. `0x1638` is the hardware-validated target; the other
 VCN 2.x APUs are experimental. Raven/Raven2/Picasso are VCN 1.x and keep media disabled because the X6000
-VCN2 bridge cannot serve them. The engine is only enabled after the `-NRedVDA` bridge has prepared both
-drivers and allocated the engine.
+VCN2 bridge cannot serve them. The engine is only enabled after the `-NRedVDA`/`-NRedAVC` bridge has
+prepared both drivers and allocated the engine. The bridge and user-space data currently cover macOS
+15.8.1 (24H32) and macOS 14.8.9 (23J631); other builds are rejected or no-op.
 
 `level` is a coarse, per-profile roll-up for logging, and it stays `experimental` while media is disabled on
 most profiles. The authoritative per-feature level is generated from the compatibility manifest (see the
@@ -189,8 +190,9 @@ The Chromium fix remains independent. The VDA user-space half is a separate targ
 - Graphics policy: wired into `UserPatches`; current profiles keep it enabled.
 - Media policy: capability data populated; the VCN 2.x profiles enable VCN0 (`0x1638` validated, the
   other VCN 2.x APUs experimental). VCN 1.x profiles stay disabled until a VCN 1.x path exists.
-- `-NRedVDA`: parsed and logged, default off; with the opt-in it drives `VCNBridge` and the generated
-  VA/AppleGVA user-space patches.
+- `-NRedVDA`/`-NRedAVC`: parsed and logged, default off; with the opt-in they drive `VCNBridge` and the
+  per-build generated VA/AppleGVA user-space patches. `-NRedAVC` keeps AVC/H.264 on hardware and leaves
+  HEVC to software.
 - Build: passes (release; debug/releasedbg were validated on the VDA branch before the merge).
 - Runtime validation: the rendering fix was validated on macOS 15.8.1 / Renoir `0x1638`; VDA hardware
   decode and encode were validated on the same machine (H.264/HEVC decode matched software output,

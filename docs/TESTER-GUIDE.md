@@ -96,7 +96,7 @@ keepsyms=1 debug=0x144 itlwm_he=1 -NRedGLFix -NRedGLFixResolveOnly
   `NVRAM -> Add -> 7C436110-AB2A-4BBB-A880-FE41995C9F82 -> boot-args`
 - 备份/回滚步骤。
 
-完整安装步骤见 [Chromium 使用教程](Chromium-Fix-Usage.md)。
+完整安装步骤见 [Chromium 使用教程](archive/Chromium-Fix-Usage.md)。
 
 ## 5. 测试前基线
 

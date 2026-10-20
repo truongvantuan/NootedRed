@@ -28,4 +28,25 @@ export NRED_BUILD_BRANCH=$BRANCH
 
 echo "branch: $BRANCH"
 echo "artifacts: $ROOT/build/branches/$BRANCH"
-exec xmake -P "$ROOT" "$@"
+BUILD_MARK=$(mktemp "${TMPDIR:-/tmp}/nred-build-start.XXXXXX")
+trap 'rm -f "$BUILD_MARK"' EXIT
+xmake -P "$ROOT" "$@" || exit $?
+
+# AppleForge names the archive "<name>-<version>-<MODE>.zip".  Append the local build time so
+# repeated default builds never silently overwrite each other.
+STAMP=$(date +%Y%m%d-%H%M%S)
+for ZIP in "$ROOT"/build/branches/"$BRANCH"/*/*/*/NootedRed-*.zip; do
+    [ -f "$ZIP" ] || continue
+    # Preserve older canonical archives from other modes/versions in this branch.
+    # macOS /bin/sh's -nt comparison loses subsecond precision; find preserves it.
+    [ -n "$(find "$ZIP" -newer "$BUILD_MARK" -print)" ] || continue
+    case "$ZIP" in
+        *-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9].zip)
+            continue
+            ;;
+    esac
+    TIMESTAMPED="${ZIP%.zip}-$STAMP.zip"
+    [ -e "$TIMESTAMPED" ] && continue
+    mv "$ZIP" "$TIMESTAMPED"
+    echo "timestamped archive: $TIMESTAMPED"
+done
