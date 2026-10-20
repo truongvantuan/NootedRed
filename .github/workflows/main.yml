@@ -8,8 +8,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    name: Build x86_64 release
+    runs-on: macos-15-intel
     timeout-minutes: 30
+
+    defaults:
+      run:
+        shell: bash
 
     env:
       AppleForgePath: ${{ github.workspace }}/AppleForge
@@ -38,11 +43,36 @@ jobs:
           xmake f -m release -a x86_64 -y
           sh tools/build-branch.sh -y
 
+      - name: Verify and stage release
+        run: |
+          release_dir="build/branches/$NRED_BUILD_BRANCH/macosx/x86_64/release"
+          shopt -s nullglob
+          release_zips=("$release_dir"/*.zip)
+
+          if (( ${#release_zips[@]} == 0 )); then
+            echo "::error::No release ZIP found in $release_dir"
+            exit 1
+          fi
+
+          if [[ ! -s "$release_dir/NootedRed.kext/Contents/MacOS/NootedRed" ]]; then
+            echo "::error::NootedRed.kext is missing or its executable is empty"
+            exit 1
+          fi
+
+          for release_zip in "${release_zips[@]}"; do
+            unzip -tq "$release_zip"
+          done
+
+          mkdir -p artifacts
+          cp "${release_zips[@]}" SOURCE_COMMIT.txt artifacts/
+          (
+            cd artifacts
+            shasum -a 256 ./*.zip > SHA256SUMS
+          )
+
       - name: Upload release
         uses: actions/upload-artifact@v7
         with:
           name: NootedRed-RELEASE
           if-no-files-found: error
-          path: |
-            build/branches/ci/macosx/x86_64/release/*.zip
-            SOURCE_COMMIT.txt
+          path: artifacts/
