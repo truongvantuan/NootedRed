@@ -41,7 +41,10 @@ namespace
     const char* const kBootArgGLFixOff         = "-NRedGLFixOff";
     const char* const kBootArgGLFixResolve     = "-NRedGLFixResolve";
     const char* const kBootArgGLFixResolveOnly = "-NRedGLFixResolveOnly";
+    const char* const kBootArgGLFixResolveOff  = "-NRedGLFixResolveOff";
+    const char* const kBootArgGLFixNoResolve   = "-NRedGLFixNoResolve";
     const char* const kBootArgVDA              = "-NRedVDA";
+    const char* const kBootArgAVC              = "-NRedAVC";
 
     // The patch bytes and page images below are specific to one driver build, and the native backend hooks
     // code signing page validation, so this is opt-in until the table has been filled in and tested.
@@ -107,6 +110,38 @@ namespace
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
     };
+
+    // macOS 14 (Sonoma) resolver contexts.
+    static const UInt8 kResolverHwCtx_Sonoma[] = {
+        0xAC, 0x00, 0x00, 0x00, 0x41, 0x83, 0xF8, 0x13, 0x77, 0x45, 0xC7, 0x07, 0x8D, 0x00, 0x00, 0x00,
+        0xC7, 0x47, 0x78, 0x04, 0x00, 0x00, 0x00, 0xC5, 0xF8, 0x28, 0x05, 0xF4, 0x19, 0x0E, 0x00, 0xC5,
+    };
+    static const UInt8 kResolverDualCtx_Sonoma[] = {
+        0x88, 0xA0, 0x00, 0x00, 0x00, 0xD1, 0xE9, 0x83, 0xE1, 0x01, 0x8B, 0x83, 0x98, 0x13, 0x00, 0x00,
+        0x83, 0xE0, 0xFE, 0x09, 0xC8, 0x89, 0x83, 0x98, 0x13, 0x00, 0x00, 0x48, 0x8B, 0x8B, 0x68, 0x0D,
+    };
+    static const UInt8 kResolverGateCtx_Sonoma[] = {
+        0xFF, 0xFF, 0x48, 0x8B, 0x85, 0x48, 0xFE, 0xFF, 0xFF, 0xF6, 0x80, 0xA0, 0x00, 0x00, 0x00, 0x02,
+        0x75, 0x0B, 0x31, 0xC0, 0x48, 0x8B, 0x9D, 0x78, 0xFE, 0xFF, 0xFF, 0xEB, 0x1D, 0x80, 0xBD, 0x80,
+    };
+    static const UInt8 kResolverAllowCtx_Sonoma[] = {
+        0x95, 0xC1, 0x48, 0x8B, 0x9D, 0x78, 0xFE, 0xFF, 0xFF, 0x4A, 0x0F, 0xBA, 0x64, 0x33, 0x08, 0x22,
+        0x0F, 0x93, 0xC0, 0x08, 0xC8, 0x4C, 0x8B, 0xB5, 0x70, 0xFE, 0xFF, 0xFF, 0x0F, 0xB6, 0xC0, 0x41,
+    };
+
+    static const UserPatches::SignaturePatch kResolverSignatures_Sonoma[] = {
+        {kResolverHwCtx_Sonoma, kResolverMask32, sizeof(kResolverHwCtx_Sonoma), 16, kGLDriverHwInfoReplace,
+         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000},
+        {kResolverDualCtx_Sonoma, kResolverMask32, sizeof(kResolverDualCtx_Sonoma), 16, kGLDriverDualQuadReplace,
+         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000},
+        {kResolverGateCtx_Sonoma, kResolverMask32, sizeof(kResolverGateCtx_Sonoma), 16, kMTLGateReplace,
+         sizeof(kMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
+        {kResolverAllowCtx_Sonoma, kResolverMask32, sizeof(kResolverAllowCtx_Sonoma), 16, kMTLAllowReplace_Sonoma,
+         sizeof(kMTLAllowReplace_Sonoma), 0, 1, ~static_cast<UInt64>(0)},
+    };
+    constexpr size_t kResolverSignatureCount_Sonoma = arrsize(kResolverSignatures_Sonoma);
+
+    // macOS 15 (Sequoia) resolver contexts.
     static const UInt8 kResolverHwCtx[] = {
         0xAC, 0x00, 0x00, 0x00, 0x41, 0x83, 0xF8, 0x13, 0x77, 0x45, 0xC7, 0x07, 0x8D, 0x00, 0x00, 0x00,
         0xC7, 0x47, 0x78, 0x04, 0x00, 0x00, 0x00, 0xC5, 0xF8, 0x28, 0x05, 0x50, 0xFE, 0x0D, 0x00, 0xC5,
@@ -197,7 +232,8 @@ namespace
          UserPatches::kApuAll, kGLDriverPatches_Tahoe, kGLDriverPatchCount_Tahoe},
         // macOS 14.x (Sonoma) fallback.
         {"14.x / Sonoma gfx9 APU", PenguinWizardry::KernelVersion(23, 0), PenguinWizardry::KernelVersion(23, 99),
-         UserPatches::kApuAll, kGLDriverPatches_Sonoma, kGLDriverPatchCount_Sonoma},
+         UserPatches::kApuAll, kGLDriverPatches_Sonoma, kGLDriverPatchCount_Sonoma,
+         kResolverSignatures_Sonoma, kResolverSignatureCount_Sonoma},
     };
     constexpr size_t kGLDriverPatchSetCount = sizeof(kGLDriverPatchSets) / sizeof(kGLDriverPatchSets[0]);
 
@@ -220,9 +256,10 @@ void UserPatches::init()
     // The resolver is a GL-only fallback: it must never be active when the GL fix itself is off.
     this->resolverOnly    = this->enabled && checkKernelArgument(kBootArgGLFixResolveOnly);
     this->resolverEnabled = this->enabled
-                            && (this->resolverOnly || checkKernelArgument(kBootArgGLFixResolve));
+                            && !checkKernelArgument(kBootArgGLFixResolveOff)
+                            && !checkKernelArgument(kBootArgGLFixNoResolve);
 
-    this->vdaEnabled = checkKernelArgument(kBootArgVDA);
+    this->vdaEnabled = checkKernelArgument(kBootArgVDA) || checkKernelArgument(kBootArgAVC);
 
     if (!this->enabled && !this->vdaEnabled) {
         DBGLOG("UserPatch", "User-space driver patches are disabled");
@@ -300,6 +337,7 @@ void UserPatches::selectPatchSet()
         this->patchCount     = set.count;
         this->signatures     = set.signatures;
         this->signatureCount = set.signatureCount;
+        for (auto& applied : this->signatureApplied) { applied = 0; }
         SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
                version.major(), version.minor(), apus);
         return;
@@ -310,18 +348,25 @@ void UserPatches::selectPatchSet()
 
     if (getKernelVersion() >= KernelVersion::Tahoe) {
         SYSLOG("UserPatch", "Fallback: selecting macOS 26 (Tahoe) GL/Metal patch set");
-        this->patches    = kGLDriverPatches_Tahoe;
-        this->patchCount = kGLDriverPatchCount_Tahoe;
+        this->patches        = kGLDriverPatches_Tahoe;
+        this->patchCount     = kGLDriverPatchCount_Tahoe;
+        this->signatures     = nullptr;
+        this->signatureCount = 0;
+        for (auto& applied : this->signatureApplied) { applied = 0; }
     } else if (getKernelVersion() >= KernelVersion::Sequoia) {
         SYSLOG("UserPatch", "Fallback: selecting macOS 15 (Sequoia) GL/Metal patch set");
-        this->patches    = kGLDriverPatches_Sequoia;
-        this->patchCount = kGLDriverPatchCount_Sequoia;
-        this->signatures = kResolverSignatures;
+        this->patches        = kGLDriverPatches_Sequoia;
+        this->patchCount     = kGLDriverPatchCount_Sequoia;
+        this->signatures     = kResolverSignatures;
         this->signatureCount = kResolverSignatureCount;
+        for (auto& applied : this->signatureApplied) { applied = 0; }
     } else {
         SYSLOG("UserPatch", "Fallback: selecting macOS 14 (Sonoma) GL/Metal patch set");
-        this->patches    = kGLDriverPatches_Sonoma;
-        this->patchCount = kGLDriverPatchCount_Sonoma;
+        this->patches        = kGLDriverPatches_Sonoma;
+        this->patchCount     = kGLDriverPatchCount_Sonoma;
+        this->signatures     = kResolverSignatures_Sonoma;
+        this->signatureCount = kResolverSignatureCount_Sonoma;
+        for (auto& applied : this->signatureApplied) { applied = 0; }
     }
 }
 
@@ -606,10 +651,23 @@ void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOf
         return;
     }
 
+    bool allApplied = true;
+    for (size_t i = 0; i < this->signatureCount && i < kMaxSignatures; ++i) {
+        if (this->signatureApplied[i] < this->signatures[i].count) {
+            allApplied = false;
+            break;
+        }
+    }
+    if (allApplied) { return; }
+
     const auto* const bytes = static_cast<const UInt8*>(data);
 
     for (size_t signatureIndex = 0; signatureIndex < this->signatureCount; signatureIndex++) {
         const auto& signature = this->signatures[signatureIndex];
+
+        if (signatureIndex < kMaxSignatures && this->signatureApplied[signatureIndex] >= signature.count) {
+            continue;
+        }
 
         if (signature.context == nullptr || signature.mask == nullptr || signature.replace == nullptr) { continue; }
         if (signature.contextSize == 0 || signature.contextSize > kPageSize) { continue; }
@@ -618,6 +676,9 @@ void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOf
 
         auto skip  = signature.skip;
         auto count = signature.count;
+        if (signatureIndex < kMaxSignatures && this->signatureApplied[signatureIndex] < count) {
+            count -= this->signatureApplied[signatureIndex];
+        }
 
         for (size_t offset = 0; offset + signature.contextSize <= kPageSize; offset++) {
             bool matches = true;
@@ -649,6 +710,9 @@ void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOf
             }
 
             SYSLOG("UserPatch", "Resolver patched a signature site at page offset 0x%zX", offset);
+            if (signatureIndex < kMaxSignatures) {
+                this->signatureApplied[signatureIndex]++;
+            }
 
             if (--count == 0) { break; }
         }

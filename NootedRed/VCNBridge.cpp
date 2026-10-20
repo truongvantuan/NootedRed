@@ -47,6 +47,7 @@ namespace
 {
 
     const char* const kBootArgVDA = "-NRedVDA";
+    const char* const kBootArgAVC = "-NRedAVC";
 
     // All generated data in this tree was derived from macOS 15.8.1 (24H32, Darwin 24.6.0)
     // and macOS 14.8.9 (23J631, Darwin 23.6.0).
@@ -58,16 +59,17 @@ namespace
 
     // The build string is checked once the accelerator starts, not in NRed::init: the early kext-load
     // phase can run before `osversion` is populated, which would otherwise disable a valid bridge.
+    // Allow any patch/sub-build of the supported minor series (e.g. 14.8.x matches "23J", 15.8.x matches "24H").
     bool isSupportedBuild()
     {
         if (!isSupportedOS()) { return false; }
         // If the early-boot version string is not populated yet, the ABI guards are the remaining
-        // protection; once it is visible, require the exact validated build.
+        // protection; once it is visible, require the matching minor release family.
         if (osversion[0] == '\0') { return true; }
         if (currentKernelVersion().major() == 24) {
-            return strncmp(osversion, "24H32", 5) == 0;
+            return strncmp(osversion, "24H", 3) == 0;
         } else if (currentKernelVersion().major() == 23) {
-            return strncmp(osversion, "23J631", 6) == 0;
+            return strncmp(osversion, "23J", 3) == 0;
         }
         return false;
     }
@@ -171,14 +173,14 @@ VCNBridge& VCNBridge::singleton() { return moduleInstance; }
 
 void VCNBridge::init()
 {
-    this->requested = checkKernelArgument(kBootArgVDA);
+    this->requested = checkKernelArgument(kBootArgVDA) || checkKernelArgument(kBootArgAVC);
     if (!this->requested) {
-        DBGLOG("VCN", "VCN bridge is disabled; add -NRedVDA to opt in");
+        DBGLOG("VCN", "VCN bridge is disabled; add -NRedVDA or -NRedAVC to opt in");
         return;
     }
 
     if (!isSupportedOS()) {
-        SYSLOG("VCN", "VCN data is for macOS 15.8.1 (Darwin 24.6) or 14.8.9 (Darwin 23.6); -NRedVDA is ignored on this build");
+        SYSLOG("VCN", "VCN data is for macOS 15.8.1 (Darwin 24.6) or 14.8.9 (Darwin 23.6); hardware decode boot arg is ignored on this build");
         this->requested = false;
         return;
     }

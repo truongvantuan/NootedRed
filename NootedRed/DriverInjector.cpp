@@ -23,6 +23,7 @@
 #include <DriverInjector.hpp>
 #include <Headers/kern_patcher.hpp>
 #include <Headers/kern_util.hpp>
+#include <VDA.hpp>
 #include <libkern/OSTypes.h>
 #include <libkern/c++/OSArray.h>
 #include <libkern/c++/OSDictionary.h>
@@ -92,6 +93,20 @@ bool DriverInjector::wrapAddDrivers(void* const self, OSArray* const array, cons
             singleton().matchedDrivers |= getBit(identifierIndex);
 
             DBGLOG("DriverInjector", "Matched %s, injecting.", driver.identifier);
+
+            if (VDA::singleton().isAVCOnly() && strcmp(driver.identifier, "com.apple.kext.AMDRadeonX5000") == 0) {
+                const auto count = driver.personalities->getCount();
+                for (UInt32 i = 0; i < count; ++i) {
+                    auto* const pDict = OSDynamicCast(OSDictionary, driver.personalities->getObject(i));
+                    if (pDict != nullptr) {
+                        pDict->removeObject("IOGVAHEVCDecode");
+                        pDict->removeObject("IOGVAHEVCDecodeCapabilities");
+                        pDict->removeObject("IOGVAHEVCEncode");
+                        pDict->removeObject("IOGVAHEVCEncodeCapabilities");
+                    }
+                }
+                DBGLOG("DriverInjector", "-NRedAVC active: stripped HEVC decode/encode capabilities from %s", driver.identifier);
+            }
 
             array->merge(driver.personalities);
 

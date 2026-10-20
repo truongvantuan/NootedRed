@@ -164,6 +164,9 @@ private:
     // Maximum combined (GL + VDA) patch entries in the native backend.
     static constexpr size_t kMaxNativePatches = 64;
 
+    // Maximum amount of signature patches in a patch set.
+    static constexpr size_t kMaxSignatures   = 8;
+
     // Amount of patches handed over to Lilu's user patcher.
     static constexpr size_t kMaxLiluPatches = 8;
 
@@ -191,6 +194,7 @@ private:
     // this only runs once the exact image does not match and the user opted in with `-NRedGLFixResolve`.
     const SignaturePatch* signatures{nullptr};
     size_t                signatureCount{0};
+    size_t                signatureApplied[kMaxSignatures]{};
     bool                  resolverEnabled{false};
     bool                  resolverOnly{false};
 
