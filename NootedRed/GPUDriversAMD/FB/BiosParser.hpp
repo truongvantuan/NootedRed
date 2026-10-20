@@ -46,26 +46,30 @@ struct AtomDataRevision
 
 class AmdAtomFwHelper
 {
+    struct BigSurFields
+    {
+        UInt32                                    m_debugLevel;
+        char                                      m_pciLocString[0x10];
+        class AtiAtomBiosParserService*           m_pBiosParser;
+        class AMDRadeonX6000_AmdBiosParserHelper* m_pReference;
+        void*                                     m_pReadRom;
+        UInt8*                                    m_biosImage;
+        UInt32                                    m_biosSize;
+    };
+
+    struct CatalinaFields
+    {
+        UInt32                          m_debugLevel;
+        char                            m_pciLocString[0x10];
+        class AtiAtomBiosParserService* m_pBiosParser;
+        UInt8*                          m_biosImage;
+        UInt32                          m_biosSize;
+    };
+
     union
     {
-        struct
-        {
-            UInt32                                    m_debugLevel;
-            char                                      m_pciLocString[0x10];
-            class AtiAtomBiosParserService*           m_pBiosParser;
-            class AMDRadeonX6000_AmdBiosParserHelper* m_pReference;
-            void*                                     m_pReadRom;
-            UInt8*                                    m_biosImage;
-            UInt32                                    m_biosSize;
-        } bigsur;
-        struct
-        {
-            UInt32                          m_debugLevel;
-            char                            m_pciLocString[0x10];
-            class AtiAtomBiosParserService* m_pBiosParser;
-            UInt8*                          m_biosImage;
-            UInt32                          m_biosSize;
-        } cat;
+        BigSurFields   bigsur;
+        CatalinaFields cat;
     };
 
     AmdAtomFwHelper(AmdAtomFwServicesInit* initInfo);

@@ -52,211 +52,211 @@
 #include <mach/i386/vm_types.h>
 #include <mach/kern_return.h>
 
-static const char ativvaxy_rv_dat[] = {
+static const UInt8 ativvaxy_rv_dat[] = {
 #include "Firmware/ativvaxy_rv.dat.inc"
 };
-static const char ativvaxy_nv_dat[] = {
+static const UInt8 ativvaxy_nv_dat[] = {
 #include "Firmware/ativvaxy_nv.dat.inc"
 };
-static const char atidmcub_rn_dat[] = {
+static const UInt8 atidmcub_rn_dat[] = {
 #include "Firmware/atidmcub_rn.dat.inc"
 };
 
-static const char _dmcu_eram_dcn10_abm_2_1[] = {
+static const UInt8 _dmcu_eram_dcn10_abm_2_1[] = {
 #include "Firmware/dmcu_eram_dcn10_abm_2_1.bin.inc"
 };
 DMCU_FW_CONSTANT(0x100, dmcu_eram_dcn10_abm_2_1);
-static const char _dmcu_eram_dcn10_abm_2_2[] = {
+static const UInt8 _dmcu_eram_dcn10_abm_2_2[] = {
 #include "Firmware/dmcu_eram_dcn10_abm_2_2.bin.inc"
 };
 DMCU_FW_CONSTANT(0x100, dmcu_eram_dcn10_abm_2_2);
-static const char _dmcu_eram_dcn10_abm_2_3[] = {
+static const UInt8 _dmcu_eram_dcn10_abm_2_3[] = {
 #include "Firmware/dmcu_eram_dcn10_abm_2_3.bin.inc"
 };
 DMCU_FW_CONSTANT(0x100, dmcu_eram_dcn10_abm_2_3);
-static const char _dmcu_eram_dcn21_abm_2_1[] = {
+static const UInt8 _dmcu_eram_dcn21_abm_2_1[] = {
 #include "Firmware/dmcu_eram_dcn21_abm_2_1.bin.inc"
 };
 DMCU_FW_CONSTANT(0x100, dmcu_eram_dcn21_abm_2_1);
-static const char _dmcu_eram_dcn21_abm_2_2[] = {
+static const UInt8 _dmcu_eram_dcn21_abm_2_2[] = {
 #include "Firmware/dmcu_eram_dcn21_abm_2_2.bin.inc"
 };
 DMCU_FW_CONSTANT(0x100, dmcu_eram_dcn21_abm_2_2);
-static const char _dmcu_eram_dcn21_abm_2_3[] = {
+static const UInt8 _dmcu_eram_dcn21_abm_2_3[] = {
 #include "Firmware/dmcu_eram_dcn21_abm_2_3.bin.inc"
 };
 DMCU_FW_CONSTANT(0x100, dmcu_eram_dcn21_abm_2_3);
-static const char _dmcu_eram_dcn21_abm_2_4[] = {
+static const UInt8 _dmcu_eram_dcn21_abm_2_4[] = {
 #include "Firmware/dmcu_eram_dcn21_abm_2_4.bin.inc"
 };
 DMCU_FW_CONSTANT(0x100, dmcu_eram_dcn21_abm_2_4);
-static const char _dmcu_intvectors_dcn10_abm_2_1[] = {
+static const UInt8 _dmcu_intvectors_dcn10_abm_2_1[] = {
 #include "Firmware/dmcu_intvectors_dcn10_abm_2_1.bin.inc"
 };
 DMCU_FW_CONSTANT(0xFFE0, dmcu_intvectors_dcn10_abm_2_1);
-static const char _dmcu_intvectors_dcn10_abm_2_2[] = {
+static const UInt8 _dmcu_intvectors_dcn10_abm_2_2[] = {
 #include "Firmware/dmcu_intvectors_dcn10_abm_2_2.bin.inc"
 };
 DMCU_FW_CONSTANT(0xFFE0, dmcu_intvectors_dcn10_abm_2_2);
-static const char _dmcu_intvectors_dcn10_abm_2_3[] = {
+static const UInt8 _dmcu_intvectors_dcn10_abm_2_3[] = {
 #include "Firmware/dmcu_intvectors_dcn10_abm_2_3.bin.inc"
 };
 DMCU_FW_CONSTANT(0xFFE0, dmcu_intvectors_dcn10_abm_2_3);
-static const char _dmcu_intvectors_dcn21_abm_2_1[] = {
+static const UInt8 _dmcu_intvectors_dcn21_abm_2_1[] = {
 #include "Firmware/dmcu_intvectors_dcn21_abm_2_1.bin.inc"
 };
 DMCU_FW_CONSTANT(0xFFE0, dmcu_intvectors_dcn21_abm_2_1);
-static const char _dmcu_intvectors_dcn21_abm_2_2[] = {
+static const UInt8 _dmcu_intvectors_dcn21_abm_2_2[] = {
 #include "Firmware/dmcu_intvectors_dcn21_abm_2_2.bin.inc"
 };
 DMCU_FW_CONSTANT(0xFFE0, dmcu_intvectors_dcn21_abm_2_2);
-static const char _dmcu_intvectors_dcn21_abm_2_3[] = {
+static const UInt8 _dmcu_intvectors_dcn21_abm_2_3[] = {
 #include "Firmware/dmcu_intvectors_dcn21_abm_2_3.bin.inc"
 };
 DMCU_FW_CONSTANT(0xFFE0, dmcu_intvectors_dcn21_abm_2_3);
-static const char _dmcu_intvectors_dcn21_abm_2_4[] = {
+static const UInt8 _dmcu_intvectors_dcn21_abm_2_4[] = {
 #include "Firmware/dmcu_intvectors_dcn21_abm_2_4.bin.inc"
 };
 DMCU_FW_CONSTANT(0xFFE0, dmcu_intvectors_dcn21_abm_2_4);
 
-static const char _gc_9_1_ce_ucode[] = {
+static const UInt8 _gc_9_1_ce_ucode[] = {
 #include "Firmware/gc_9_1_ce_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#80", 0x36, 0x800, 0x60, 0x1, 0x0, gc_9_1_ce_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_me_ucode[] = {
+static const UInt8 _gc_9_1_me_ucode[] = {
 #include "Firmware/gc_9_1_me_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#167", 0x36, 0x1000, 0x60, 0x1, 0x0, gc_9_1_me_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_mec_jt_ucode[] = {
+static const UInt8 _gc_9_1_mec_jt_ucode[] = {
 #include "Firmware/gc_9_1_mec_jt_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#480", 0x36, 0x10000, 0x0, 0x1, 0x0, gc_9_1_mec_jt_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_mec_ucode[] = {
+static const UInt8 _gc_9_1_mec_ucode[] = {
 #include "Firmware/gc_9_1_mec_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#480", 0x36, 0x0, 0x0, 0x0, 0x0, gc_9_1_mec_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_pfp_ucode[] = {
+static const UInt8 _gc_9_1_pfp_ucode[] = {
 #include "Firmware/gc_9_1_pfp_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#196", 0x36, 0x1400, 0x60, 0x1, 0x0, gc_9_1_pfp_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_rlc_srlist_cntl[] = {
+static const UInt8 _gc_9_1_rlc_srlist_cntl[] = {
 #include "Firmware/gc_9_1_rlc_srlist_cntl.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_1_rlc_srlist_cntl, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_rlc_srlist_gpm_mem[] = {
+static const UInt8 _gc_9_1_rlc_srlist_gpm_mem[] = {
 #include "Firmware/gc_9_1_rlc_srlist_gpm_mem.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_1_rlc_srlist_gpm_mem, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_rlc_srlist_srm_mem[] = {
+static const UInt8 _gc_9_1_rlc_srlist_srm_mem[] = {
 #include "Firmware/gc_9_1_rlc_srlist_srm_mem.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_1_rlc_srlist_srm_mem, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_rlc_ucode[] = {
+static const UInt8 _gc_9_1_rlc_ucode[] = {
 #include "Firmware/gc_9_1_rlc_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#110", 0x1, 0x1000, 0x0, 0x1, 0x0, gc_9_1_rlc_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_rlc_ucode_a0[] = {
+static const UInt8 _gc_9_1_rlc_ucode_a0[] = {
 #include "Firmware/gc_9_1_rlc_ucode_a0.bin.inc"
 };
 GC_FW_CONSTANT("#568", 0x1, 0x1000, 0x0, 0x1, 0x0, gc_9_1_rlc_ucode_a0, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_1_rlcv_ucode[] = {
+static const UInt8 _gc_9_1_rlcv_ucode[] = {
 #include "Firmware/gc_9_1_rlcv_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#28", 0x1, 0x800, 0x0, 0x1, 0x0, gc_9_1_rlcv_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_ce_ucode[] = {
+static const UInt8 _gc_9_2_ce_ucode[] = {
 #include "Firmware/gc_9_2_ce_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#80", 0x35, 0x800, 0x60, 0x1, 0x0, gc_9_2_ce_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_me_ucode[] = {
+static const UInt8 _gc_9_2_me_ucode[] = {
 #include "Firmware/gc_9_2_me_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#166", 0x35, 0x1000, 0x60, 0x1, 0x0, gc_9_2_me_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_mec_jt_ucode[] = {
+static const UInt8 _gc_9_2_mec_jt_ucode[] = {
 #include "Firmware/gc_9_2_mec_jt_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#480", 0x36, 0x0, 0x0, 0x1, 0x0, gc_9_2_mec_jt_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_mec_ucode[] = {
+static const UInt8 _gc_9_2_mec_ucode[] = {
 #include "Firmware/gc_9_2_mec_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#480", 0x36, 0x0, 0x0, 0x0, 0x0, gc_9_2_mec_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_pfp_ucode[] = {
+static const UInt8 _gc_9_2_pfp_ucode[] = {
 #include "Firmware/gc_9_2_pfp_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#196", 0x36, 0x1400, 0x60, 0x1, 0x0, gc_9_2_pfp_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_rlc_srlist_cntl[] = {
+static const UInt8 _gc_9_2_rlc_srlist_cntl[] = {
 #include "Firmware/gc_9_2_rlc_srlist_cntl.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_2_rlc_srlist_cntl, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_rlc_srlist_gpm_mem[] = {
+static const UInt8 _gc_9_2_rlc_srlist_gpm_mem[] = {
 #include "Firmware/gc_9_2_rlc_srlist_gpm_mem.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_2_rlc_srlist_gpm_mem, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_rlc_srlist_srm_mem[] = {
+static const UInt8 _gc_9_2_rlc_srlist_srm_mem[] = {
 #include "Firmware/gc_9_2_rlc_srlist_srm_mem.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_2_rlc_srlist_srm_mem, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_rlc_ucode[] = {
+static const UInt8 _gc_9_2_rlc_ucode[] = {
 #include "Firmware/gc_9_2_rlc_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#73", 0x1, 0x1000, 0x0, 0x1, 0x0, gc_9_2_rlc_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_2_rlcv_ucode[] = {
+static const UInt8 _gc_9_2_rlcv_ucode[] = {
 #include "Firmware/gc_9_2_rlcv_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#28", 0x1, 0x800, 0x0, 0x1, 0x0, gc_9_2_rlcv_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_ce_ucode[] = {
+static const UInt8 _gc_9_3_ce_ucode[] = {
 #include "Firmware/gc_9_3_ce_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#80", 0x36, 0x800, 0x60, 0x1, 0x0, gc_9_3_ce_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_me_ucode[] = {
+static const UInt8 _gc_9_3_me_ucode[] = {
 #include "Firmware/gc_9_3_me_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#167", 0x36, 0x1000, 0x60, 0x1, 0x0, gc_9_3_me_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_mec_jt_ucode[] = {
+static const UInt8 _gc_9_3_mec_jt_ucode[] = {
 #include "Firmware/gc_9_3_mec_jt_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#480", 0x36, 0x10000, 0x0, 0x1, 0x0, gc_9_3_mec_jt_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_mec_ucode[] = {
+static const UInt8 _gc_9_3_mec_ucode[] = {
 #include "Firmware/gc_9_3_mec_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#480", 0x36, 0x0, 0x0, 0x0, 0x0, gc_9_3_mec_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_pfp_ucode[] = {
+static const UInt8 _gc_9_3_pfp_ucode[] = {
 #include "Firmware/gc_9_3_pfp_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#196", 0x36, 0x1400, 0x60, 0x1, 0x0, gc_9_3_pfp_ucode, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_rlc_srlist_cntl[] = {
+static const UInt8 _gc_9_3_rlc_srlist_cntl[] = {
 #include "Firmware/gc_9_3_rlc_srlist_cntl.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_3_rlc_srlist_cntl, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_rlc_srlist_gpm_mem[] = {
+static const UInt8 _gc_9_3_rlc_srlist_gpm_mem[] = {
 #include "Firmware/gc_9_3_rlc_srlist_gpm_mem.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_3_rlc_srlist_gpm_mem, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_rlc_srlist_srm_mem[] = {
+static const UInt8 _gc_9_3_rlc_srlist_srm_mem[] = {
 #include "Firmware/gc_9_3_rlc_srlist_srm_mem.bin.inc"
 };
 GC_FW_CONSTANT("#1", 0x1, 0x0, 0x0, 0x1, 0x0, gc_9_3_rlc_srlist_srm_mem, 0x0, 0x0, 0x0, 0x0);
-static const char _gc_9_3_rlc_ucode[] = {
+static const UInt8 _gc_9_3_rlc_ucode[] = {
 #include "Firmware/gc_9_3_rlc_ucode.bin.inc"
 };
 GC_FW_CONSTANT("#60", 0x1, 0x1000, 0x0, 0x1, 0x0, gc_9_3_rlc_ucode, 0x0, 0x0, 0x0, 0x0);
 
-static const char psp_asd_bin[] = {
+static const UInt8 psp_asd_bin[] = {
 #include "Firmware/psp_asd.bin.inc"
 };
-static const char psp_auc_bin[] = {
+static const UInt8 psp_auc_bin[] = {
 #include "Firmware/psp_auc.bin.inc"
 };
-static const char psp_dtm_bin[] = {
+static const UInt8 psp_dtm_bin[] = {
 #include "Firmware/psp_dtm.bin.inc"
 };
-static const char psp_fp_bin[] = {
+static const UInt8 psp_fp_bin[] = {
 #include "Firmware/psp_fp.bin.inc"
 };
-static const char psp_hdcp_bin[] = {
+static const UInt8 psp_hdcp_bin[] = {
 #include "Firmware/psp_hdcp.bin.inc"
 };
 
-static const char _sdma_4_1_ucode[] = {
+static const UInt8 _sdma_4_1_ucode[] = {
 #include "Firmware/sdma_4_1_ucode.bin.inc"
 };
 SDMA_FW_CONSTANT("40", sdma_4_1_ucode, 0x29, 0x0, 0x0);
@@ -905,7 +905,7 @@ void X5000HWLibs::wrapPopulateFirmwareDirectory(void* const self)
 }
 
 template<const UInt32 N>
-static bool setIpFwOutForFW(const char (&data)[N], void* const out)
+static bool setIpFwOutForFW(const UInt8 (&data)[N], void* const out)
 {
     getMember<const void*>(out, 0x0) = data;
     getMember<UInt32>(out, 0x8)      = N;
@@ -973,7 +973,7 @@ CAILResult X5000HWLibs::pspSecurityFeatureCapsSet12(void* const ctx)
 }
 
 template<const UInt32 N>
-static UInt32 replacePspCmdDataWith(void* const data, const char (&fw)[N])
+static UInt32 replacePspCmdDataWith(void* const data, const UInt8 (&fw)[N])
 {
     memcpy(data, fw, N);
     return N;

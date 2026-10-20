@@ -332,15 +332,15 @@ void X6000FB::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t s
                    "Failed to solve IRQMGR_ReadRegister");
     }
 
-    const PenguinWizardry::MaskedLookupPatch patch{&kextRadeonX6000Framebuffer, kPopulateDeviceInfoOriginal,
-                                                   kPopulateDeviceInfoMask,     kPopulateDeviceInfoPatched,
-                                                   kPopulateDeviceInfoMask,     1};
-    PANIC_COND(!patch.apply(patcher, slide, size), "X6000FB", "Failed to apply populateDeviceInfo patch");
+    const PenguinWizardry::MaskedLookupPatch populateDeviceInfoPatch{
+        &kextRadeonX6000Framebuffer, kPopulateDeviceInfoOriginal, kPopulateDeviceInfoMask,
+        kPopulateDeviceInfoPatched, kPopulateDeviceInfoMask,     1};
+    PANIC_COND(!populateDeviceInfoPatch.apply(patcher, slide, size), "X6000FB", "Failed to apply populateDeviceInfo patch");
 
     if (NRed::singleton().getAttributes().isRenoir()) {
-        const PenguinWizardry::MaskedLookupPatch patch{&kextRadeonX6000Framebuffer, kInitializeDmcubServices1Original,
-                                                       kInitializeDmcubServices1Patched, 1};
-        PANIC_COND(!patch.apply(patcher, slide, size), "X6000FB",
+        const PenguinWizardry::MaskedLookupPatch dmcubFamilyPatch{
+            &kextRadeonX6000Framebuffer, kInitializeDmcubServices1Original, kInitializeDmcubServices1Patched, 1};
+        PANIC_COND(!dmcubFamilyPatch.apply(patcher, slide, size), "X6000FB",
                    "Failed to apply initializeDmcubServices family id patch");
         if (currentKernelVersion() <= MACOS_10_15_X) {
             const PenguinWizardry::MaskedLookupPatch patches[] = {
