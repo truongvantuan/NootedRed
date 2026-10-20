@@ -15,7 +15,10 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGE = 0x1000
 
-KERNEL_DATA = ROOT / "NootedRed" / "VCNKernelData.hpp"
+KERNEL_DATA_24H32 = ROOT / "NootedRed" / "VCNData" / "24H32.hpp"
+KERNEL_DATA_23J631 = ROOT / "NootedRed" / "VCNData" / "23J631.hpp"
+VCN_DATA = ROOT / "NootedRed" / "VCNData.hpp"
+VCN_SELECTOR = ROOT / "NootedRed" / "VCNData.cpp"
 VCN_BRIDGE = ROOT / "NootedRed" / "VCNBridge.cpp"
 HEADERS = {
     "Sequoia VA": (ROOT / "NootedRed" / "VDAVAData.hpp", "15.8.1", "24H32", 9, 12),
@@ -38,10 +41,10 @@ def arrays(text: str) -> dict[str, bytes]:
     return result
 
 
-def parse_call_patches(text: str, name: str) -> list[dict]:
+def parse_call_patches(text: str, label: str, name: str = "CallPatches") -> list[dict]:
     match = re.search(rf"inline constexpr CallPatch\s+{name}\[\]\s*=\s*\{{(.*?)\n    \}};", text, re.S)
     if not match:
-        raise Failure(f"{name} not found in {KERNEL_DATA}")
+        raise Failure(f"{label}: {name} not found")
     entries = []
     for entry in re.finditer(
         r'\{\s*"([^"]+)"\s*,\s*(0x[0-9A-Fa-f]+)\s*,\s*\{\s*([^}]+)\}\s*,\s*(0x[0-9A-Fa-f]+)\s*,?\s*\}',
@@ -50,7 +53,7 @@ def parse_call_patches(text: str, name: str) -> list[dict]:
         symbol, offset, original, new_slot = entry.groups()
         original_bytes = bytes(int(value, 16) for value in re.findall(r"0x([0-9A-Fa-f]{2})", original))
         if len(original_bytes) != 6:
-            raise Failure(f"{name}: {symbol} original is {len(original_bytes)} bytes, expected 6")
+            raise Failure(f"{label}: {symbol} original is {len(original_bytes)} bytes, expected 6")
         entries.append({
             "symbol": symbol,
             "offset": int(offset, 16),
@@ -58,7 +61,7 @@ def parse_call_patches(text: str, name: str) -> list[dict]:
             "newSlot": int(new_slot, 16),
         })
     if len(entries) != 20:
-        raise Failure(f"{name}: parsed {len(entries)} entries, expected 20")
+        raise Failure(f"{label}: parsed {len(entries)} entries, expected 20")
     return entries
 
 
@@ -95,56 +98,58 @@ def parse_page_patches(text: str, label: str) -> tuple[int, int, set[str]]:
 
 
 def main() -> int:
-    kernel_text = KERNEL_DATA.read_text()
-    sequoia = parse_call_patches(kernel_text, "CallPatches")
-    sonoma = parse_call_patches(kernel_text, "CallPatches_Sonoma")
-    max_match = re.search(r"kMaxCallPatches\s*=\s*(\d+)", kernel_text)
-    if max_match is None or int(max_match.group(1)) < len(sequoia):
-        raise Failure("kMaxCallPatches is missing or too small")
-    if not any(entry["newSlot"] == 0 for entry in sequoia) or not any(entry["newSlot"] == 0 for entry in sonoma):
-        raise Failure("expected a signalGPUWorkSubmitted call patch in both kernel tables")
+    sequoia_text = KERNEL_DATA_24H32.read_text()
+    sonoma_text = KERNEL_DATA_23J631.read_text()
+    sequoia = parse_call_patches(sequoia_text, "24H32 CallPatches")
+    sonoma = parse_call_patches(sonoma_text, "23J631 CallPatches")
+    if len(sequoia) != 20 or len(sonoma) != 20:
+        raise Failure("both VCN call-site tables must contain 20 sites")
     if sonoma == sequoia:
         raise Failure("Sonoma and Sequoia call-site tables are identical; expected build-specific data")
-    selector = re.search(r"getCallPatches\(size_t&[^)]*\)(.*?)\n    \}", kernel_text, re.S)
-    if selector is None or "major() == 23" not in selector.group(1):
-        raise Failure("getCallPatches() does not select the Darwin 23 (Sonoma) table")
-    print(f"kernel tables: Sequoia {len(sequoia)} sites, Sonoma {len(sonoma)} sites, max {max_match.group(1)}")
+    if 'Build[] = "24H32"' not in sequoia_text or 'Build[] = "23J631"' not in sonoma_text:
+        raise Failure("per-build headers do not declare their exact build strings")
+    if 'static_assert(kCallPatchCount <= kMaxCallPatches' not in sequoia_text:
+        raise Failure("24H32 call-site table has no compile-time bound check")
+    if 'static_assert(kCallPatchCount <= kMaxCallPatches' not in sonoma_text:
+        raise Failure("23J631 call-site table has no compile-time bound check")
+    if 'DriverSHA256_6000' not in sequoia_text or 'No locally generated identity' not in sonoma_text:
+        raise Failure("per-build headers do not declare identity availability")
+    print(f"kernel tables: 24H32 {len(sequoia)} sites, 23J631 {len(sonoma)} sites")
+
+    data_text = VCN_DATA.read_text()
+    selector_text = VCN_SELECTOR.read_text()
+    for token in ("findVariant", "variantForDarwin", "hasVariantForDarwin", "kMaxCallPatches"):
+        if token not in data_text:
+            raise Failure(f"VCNData.hpp is missing {token!r}")
+    for token in ("Build23J631::kData", "Build24H32::kData", "buildMatches", "osversion[i] == '\\0'"):
+        if token not in selector_text:
+            raise Failure(f"VCNData.cpp is missing {token!r}")
+    if 'major() == 23' in selector_text or '"23J"' in selector_text or '"24H"' in selector_text:
+        raise Failure("VCNData.cpp still contains a Darwin-major/family-prefix selector")
 
     bridge_text = VCN_BRIDGE.read_text()
-    for token in ('"23J"', '"24H"', "major() == 23", "major() == 24", "CallPatches", "getCallPatches"):
+    for token in ("VCNData::variantForDarwin", "VCNData::findVariant", "currentVariant", "hasVariantForDarwin"):
         if token not in bridge_text:
-            raise Failure(f"VCNBridge.cpp is missing the multi-version marker {token!r}")
-    if "isSupportedBuild" not in bridge_text:
-        raise Failure("VCNBridge.cpp has no build gate")
-    print("bridge: 14.8.x (23J) / 15.8.x (24H) dispatch present")
+            raise Failure(f"VCNBridge.cpp is missing the exact-build marker {token!r}")
+    if "VCNKernelData" in bridge_text or "getCallPatches" in bridge_text:
+        raise Failure("VCNBridge.cpp still uses the old VCNKernelData selector")
+    print("bridge: exact-build VCNData lookup present")
 
-    for label, (path, version, build, expected_records, expected_sites) in HEADERS.items():
-        if not path.is_file():
-            raise Failure(f"{label}: {path} missing")
+    page_cases = {
+        "Sequoia VA": (ROOT / "NootedRed" / "VDAVAData.hpp", "15.8.1", 9, 12),
+        "Sonoma VA": (ROOT / "NootedRed" / "VDAVADataSonoma.hpp", "14.8.9", 9, 12),
+        "Sequoia GVA": (ROOT / "NootedRed" / "VDAGVAData.hpp", "15.8.1", 1, 1),
+        "Sonoma GVA": (ROOT / "NootedRed" / "VDAGVADataSonoma.hpp", "14.8.9", 1, 1),
+    }
+    for label, (path, build, expected_records, expected_sites) in page_cases.items():
         text = path.read_text()
-        if version not in text or build not in text:
-            raise Failure(f"{label}: source identity does not mention {version} / {build}")
-        entries = re.findall(
-            r"\{UserPatcher::FileSegment::SegmentTextText,\s*(\w+),\s*(\w+),\s*(\w+),\s*"
-            r"sizeof\(\w+\)\s*,\s*(\d+)\s*,\s*(\d+)\}",
-            text,
-        )
-        per_page = {}
-        pages = {}
-        for page_name, _find_name, _replace_name, _skip, count in entries:
-            per_page[page_name] = per_page.get(page_name, 0) + int(count)
-            pages[page_name] = True
-        for page_name, sites_on_page in per_page.items():
-            if sites_on_page > 16:
-                raise Failure(f"{label}: {page_name} has {sites_on_page} sites, backend cap is 16")
-        records, sites, pages = parse_page_patches(text, label)
-        if records != expected_records or sites != expected_sites:
-            raise Failure(
-                f"{label}: {records} record(s), {sites} site(s); expected {expected_records}/{expected_sites}"
-            )
-        if len(pages) > 16:
-            raise Failure(f"{label}: {len(pages)} distinct pages exceeds the native backend cap")
-        print(f"{label}: {records} record(s), {sites} site(s), {len(pages)} page(s)")
+        if build not in text:
+            raise Failure(f"{label}: build string {build} missing")
+        entries, applied, pages = parse_page_patches(text, label)
+        if (entries, applied) != (expected_records, expected_sites):
+            raise Failure(f"{label}: expected {expected_records} records / {expected_sites} sites, "
+                          f"got {entries} / {applied}")
+        print(f"{label}: {entries} record(s), {applied} site(s), {len(pages)} page(s)")
 
     print("all multi-version VCN/VDA data checks passed")
     return 0

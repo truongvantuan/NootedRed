@@ -140,8 +140,8 @@ sufficient** if the mechanism itself is undocumented and has no rollback.
 - `VCNBridge`: X5000/X6000 ABI verification, VCN2 engine allocation, X5000 media capability bits.
 - `X5000`/`HWLibs`/`AGDP`/`Backlight`/`AppleGFXHDA`/`DriverInjector` existing patches.
 - `DeviceProfile`: family/media capability data and canonical logging.
-- Per-build generated data (`VCNKernelData.hpp`): one table set per supported build, selected by exact
-  Darwin version and verified against the live kext;
+- Per-build generated data (`VCNData/<build>.hpp`): one self-contained table set per supported build,
+  selected by exact build string and verified against the live kext;
 - no `_cs_validate_page`/`_cs_validate_range` routing for GLFIX/VDA in a release build;
 - no user-space page-cache writes.
 
