@@ -29,7 +29,7 @@
 #include <Kexts.hpp>
 #include <NRed.hpp>
 #include <VCNBridge.hpp>
-#include <VCNKernelData.hpp>
+#include <VCNData.hpp>
 #include <VDA.hpp>
 #include <X5000.hpp>
 #include <PenguinWizardry/KernelVersion.hpp>
@@ -49,34 +49,34 @@ namespace
     const char* const kBootArgVDA = "-NRedVDA";
     const char* const kBootArgAVC = "-NRedAVC";
 
-    // Kernel/user-space data is generated for macOS 15.8.1 (24H32, Darwin 24.6.0) and
-    // macOS 14.8.9 (23J631, Darwin 23.6.0).  The bridge selects the matching table set.
+    // Data is compiled per exact macOS build.  There is no family-prefix fallback: osversion must name
+    // one of the builds for which a complete table set exists.
     bool isSupportedOS()
     {
-        return (currentKernelVersion().major() == 24 && currentKernelVersion().minor() == 6)
-            || (currentKernelVersion().major() == 23 && currentKernelVersion().minor() == 6);
+        const auto& version = currentKernelVersion();
+        return VCNData::hasVariantForDarwin(version.major(), version.minor());
     }
 
     // The build string is checked once the accelerator starts, not in NRed::init: the early kext-load
     // phase can run before `osversion` is populated, which would otherwise disable a valid bridge.
+    // This exact-build lookup is the only gate before X6000 data is applied; an empty or unknown build
+    // string returns nullptr and the bridge stays inert.
+    const VCNData::Variant* currentVariant()
+    {
+        const auto& version = currentKernelVersion();
+        return VCNData::findVariant(osversion, version.major(), version.minor());
+    }
+
     bool isSupportedBuild()
     {
-        if (!isSupportedOS()) { return false; }
-        // If the early-boot version string is not populated yet, the ABI guards are the remaining
-        // protection; once it is visible, require the matching minor release family (14.8.x -> 23J,
-        // 15.8.x -> 24H).  Every `original` call-site byte is still verified, so a sub-build with a
-        // different X6000 text is rejected rather than patched.
-        if (osversion[0] == '\0') { return true; }
-        if (currentKernelVersion().major() == 24) { return strncmp(osversion, "24H", 3) == 0; }
-        if (currentKernelVersion().major() == 23) { return strncmp(osversion, "23J", 3) == 0; }
-        return false;
+        return currentVariant() != nullptr;
     }
 
     bool isSupportedDevice()
     {
         // The profile is the single source of truth for the target: a VCN 2.x device whose profile enables
         // the engine (0x1638 is validated; the other VCN 2.x APUs are experimental) may use this bridge.  The
-        // generated ABI guards and the exact build check remain the hard safety gates.
+        // exact build lookup and byte-level guards remain the hard safety gates.
         const auto* const profile = DeviceProfile::current();
         return isSupportedBuild() && !NRed::singleton().hasExternalVideo() && profile != nullptr
                && profile->media.vcnGeneration == DeviceProfile::kVcn2_2 && profile->media.hasVCN0;
@@ -120,16 +120,19 @@ namespace
     }
 
     bool verifyKernelABI(KernelPatcher& patcher, const size_t id, const mach_vm_address_t slide, const size_t size,
-                         const bool old)
+                         const VCNData::Variant& variant, const bool old)
     {
         if (size < 16 || slide > ~mach_vm_address_t{0} - size) { return false; }
 
-        const auto* const guards = old ? VCNKernelData::Guards5000 : VCNKernelData::Guards6000;
-        const auto        count  = old ? arrsize(VCNKernelData::Guards5000) : arrsize(VCNKernelData::Guards6000);
-        mach_vm_address_t table{0};
-        if (!resolve(patcher, id, old ? VCNKernelData::Table5000 : VCNKernelData::Table6000, table, slide, size)) {
+        const auto* const guards = old ? variant.guards5000 : variant.guards6000;
+        const auto        count  = old ? variant.guard5000Count : variant.guard6000Count;
+        if (guards == nullptr || count == 0) {
+            SYSLOG("VCN", "%s has no guard data for build %s", old ? "X5000" : "X6000", variant.build);
             return false;
         }
+
+        mach_vm_address_t table{0};
+        if (!resolve(patcher, id, old ? variant.table5000 : variant.table6000, table, slide, size)) { return false; }
 
         for (size_t i = 0; i < count; ++i) {
             const auto& guard  = guards[i];
@@ -181,6 +184,14 @@ void VCNBridge::init()
         SYSLOG("VCN",
                "VCN data is for macOS 15.8.1 (Darwin 24.6) or 14.8.9 (Darwin 23.6); the hardware decode boot "
                "argument is ignored on this build");
+        this->requested = false;
+        return;
+    }
+
+    // Once the build string is visible, require an exact data variant.  The early kext-load path may run
+    // before `osversion` is populated; in that case the exact check is repeated before X6000 patching.
+    if (osversion[0] != '\0' && currentVariant() == nullptr) {
+        SYSLOG("VCN", "no VCN data variant for %s; the hardware decode boot argument is ignored", osversion);
         this->requested = false;
         return;
     }
@@ -424,10 +435,19 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
 
     if (id == kextRadeonX5000.loadIndex) {
         NRed::singleton().setProp32("NRedVCNX5000Seen", 1);
-        NRed::singleton().setProp32("NRedVCNDataVariant", currentKernelVersion().major() == 23 ? 1 : 2);
+        const auto& version = currentKernelVersion();
+        const auto* const variant = VCNData::variantForDarwin(version.major(), version.minor());
+        if (variant == nullptr) {
+            publishReject(4);
+            SYSLOG("VCN", "no VCN data variant for this Darwin version");
+            this->x5000Prepared = false;
+            return;
+        }
+        NRed::singleton().setProp32("NRedVCNDataVariant", variant->id);
+        NRed::singleton().setProp32("NRedVCNDataIdentityAvailable", variant->hasKernelIdentity ? 1 : 0);
         publishStage(2);
 
-        if (!verifyKernelABI(patcher, id, slide, size, true)) {
+        if (!verifyKernelABI(patcher, id, slide, size, *variant, true)) {
             this->x5000Prepared = false;
             NRed::singleton().setProp32("NRedVCNX5000ABIValidated", 0);
             publishReject(4);
@@ -520,13 +540,34 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
 
         // Only patch X6000 after we requested the load from the X5000 accelerator start and the X5000 side
         // is fully prepared.  A preloaded X6000 (for a dGPU) must be left alone.
-        if (!this->loadAttempted || !this->x5000Prepared || !isSupportedDevice()) {
+        if (!this->loadAttempted || !this->x5000Prepared) {
             publishReject(3);
             SYSLOG("VCN", "ignoring X6000 load that was not requested by the VCN bridge");
             return;
         }
 
-        if (!verifyKernelABI(patcher, id, slide, size, false)) {
+        const auto* const variant = currentVariant();
+        if (variant == nullptr) {
+            publishReject(5);
+            SYSLOG("VCN", "no VCN data variant for build '%s'; VCN bridge disabled", osversion);
+            this->x6000Prepared = false;
+            return;
+        }
+
+        if (!isSupportedDevice()) {
+            publishReject(3);
+            SYSLOG("VCN", "X6000 load is not usable for this device/profile; VCN bridge disabled");
+            this->x6000Prepared = false;
+            return;
+        }
+        NRed::singleton().setProp32("NRedVCNDataVariant", variant->id);
+        NRed::singleton().setProp32("NRedVCNDataIdentityAvailable", variant->hasKernelIdentity ? 1 : 0);
+        if (!variant->hasKernelIdentity) {
+            SYSLOG("VCN", "VCN data for %s is imported, not locally verified; exact build and byte checks apply",
+                   variant->build);
+        }
+
+        if (!verifyKernelABI(patcher, id, slide, size, *variant, false)) {
             this->x6000Prepared = false;
             NRed::singleton().setProp32("NRedVCNX6000ABIValidated", 0);
             publishReject(5);
@@ -563,12 +604,18 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
         }
 
         // Verify every generated call-site before touching any of them, then apply all-or-nothing.
-        // The per-build selector picks the Sonoma or Sequoia table; both have 20 sites.
-        size_t callPatchCount = 0;
-        const auto* const callPatches = VCNKernelData::getCallPatches(callPatchCount);
-        mach_vm_address_t addresses[VCNKernelData::kMaxCallPatches]{};
+        // The variant was selected by exact build above; there is no fallback table.
+        const auto  callPatchCount = variant->callPatchCount;
+        const auto* const callPatches = variant->callPatches;
+        if (callPatches == nullptr || callPatchCount == 0 || callPatchCount > VCNData::kMaxCallPatches) {
+            publishReject(5);
+            SYSLOG("VCN", "invalid call-site data for build %s", variant->build);
+            this->x6000Prepared = false;
+            return;
+        }
+        mach_vm_address_t addresses[VCNData::kMaxCallPatches]{};
         mach_vm_address_t signal{0};
-        if (!resolve(patcher, id, VCNKernelData::SignalSymbol, signal, slide, size)) { return; }
+        if (!resolve(patcher, id, variant->signalSymbol, signal, slide, size)) { return; }
 
         for (size_t i = 0; i < callPatchCount; ++i) {
             const auto&       patch = callPatches[i];
@@ -630,7 +677,8 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
 
         this->x6000Prepared = true;
         NRed::singleton().setProp32("NRedVCNX6000ABIValidated", 1);
-        SYSLOG("VCN", "X6000 VCN bridge prepared (%zu call-site patches, %s variant)", callPatchCount,
-               currentKernelVersion().major() == 23 ? "Sonoma" : "Sequoia");
+        SYSLOG("VCN", "X6000 VCN bridge prepared (%u call-site patches, build %s%s)", callPatchCount,
+               variant->build, variant->hasKernelIdentity ? "" : ", imported data");
+        DBGLOG("VCN", "VCN data source: %s", variant->sourceDescription);
     }
 }
