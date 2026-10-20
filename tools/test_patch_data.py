@@ -188,6 +188,17 @@ def main():
     signatures = check_signatures(arrays, text)
     sets = check_patch_sets(text)
 
+    # Regression guard for the 26.7.1 stutter report: the Tahoe patch table must use the same
+    # gate/allow pair as the known-good implementation, not the experimental direct-field form.
+    tahoe_table = re.search(r"kTahoeGLDriverPatches\[\]\s*=\s*\{(.*?)\n    \};", text, re.S)
+    check(tahoe_table is not None, "missing Tahoe patch table")
+    check("kTahoeMTLGateFind" in tahoe_table.group(1), "Tahoe table is missing the gate patch")
+    check("kTahoeMTLAllowFind" in tahoe_table.group(1), "Tahoe table is missing the allow patch")
+    check("kTahoeMTLDualQuadFind" not in tahoe_table.group(1),
+          "Tahoe table must not use the experimental direct-field Metal form")
+    check("Exact patch set matched; semantic scanning disabled" in text,
+          "exact patch sets must disable redundant semantic scanning")
+
     print(f"ok: {patches} page patch(es), {signatures} resolver signature(s), {sets} patch set(s)")
     print("all user-space patch data checks passed")
 
