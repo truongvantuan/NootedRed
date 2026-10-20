@@ -1,5 +1,5 @@
 #!/bin/bash
-# VDA hardware-decode test: run after booting with -NRedVDA.
+# VDA hardware-decode test: run after booting with -NRedVDA or -NRedAVC.
 # Collects the kernel/user-space markers, then decodes small H.264/HEVC clips with VideoToolbox and compares
 # the output with software decoding. Does not install kexts or reboot. A GPU hang is possible on a failing
 # engine; keep the rollback runbook ready.
@@ -24,10 +24,13 @@ echo "work dir: ${WORK}"
 BOOTARGS="$(sysctl -n kern.bootargs 2>/dev/null || true)"
 echo "boot-args: ${BOOTARGS}"
 
-if ! echo "${BOOTARGS}" | grep -q -- '-NRedVDA'; then
-    fail "-NRedVDA is not in boot-args; boot with it before running the decode test"
-    echo "Diagnostics were still collected in ${WORK}; rerun after adding -NRedVDA."
-fi
+AVC_ONLY=0
+case " ${BOOTARGS} " in
+    *" -NRedAVC "*) AVC_ONLY=1 ;;
+    *" -NRedVDA "*) ;;
+    *) fail "neither -NRedVDA nor -NRedAVC is in boot-args" ;;
+esac
+echo "AVC-only mode: ${AVC_ONLY} (HEVC tests skipped when enabled)"
 
 echo
 echo "== kernel/user-space markers =="
@@ -48,7 +51,7 @@ for key in NRedVCNX5000ABIValidated NRedVCNX6000ABIValidated NRedVCNNativeLoadRe
         BRIDGE_READY=0
     fi
 done
-if grep -qE '"NRedVCNUserApplied"[[:space:]]*=[[:space:]]*[0-9]+' "${WORK}/markers.txt"; then
+if grep -qE '"NRedVCNUserApplied"[[:space:]]*=[[:space:]]*[1-9][0-9]*' "${WORK}/markers.txt"; then
     pass "VDA user-space pages were patched (NRedVCNUserApplied)"
 else
     warn "NRedVCNUserApplied is absent (VA/AppleGVA pages may not have been validated yet)"
@@ -128,7 +131,9 @@ else
     else
         warn "ffmpeg has no libx264 encoder; H.264 test skipped"
     fi
-    if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265; then
+    if [[ ${AVC_ONLY} -eq 1 ]]; then
+        echo "SKIP  HEVC decode: -NRedAVC requests software fallback"
+    elif ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265; then
         make_clip "${WORK}/hevc-720p.mp4" -f lavfi -i testsrc2=size=1280x720:rate=30 -t 2 \
             -c:v libx265 -pix_fmt yuv420p
         decode_case "hevc-720p" "${WORK}/hevc-720p.mp4"
@@ -157,6 +162,10 @@ if command -v ffmpeg >/dev/null 2>&1; then
     echo
     echo "== hardware encode (VideoProc acceptance) =="
     for encoder in h264_videotoolbox hevc_videotoolbox; do
+        if [[ ${AVC_ONLY} -eq 1 && "${encoder}" == hevc_videotoolbox ]]; then
+            echo "SKIP  HEVC encode: -NRedAVC removes HEVC capabilities"
+            continue
+        fi
         out="${WORK}/encode-${encoder}.mp4"
         if run_timeout 120 ffmpeg -hide_banner -loglevel error -y -f lavfi \
             -i testsrc2=size=1280x720:rate=30 -t 1 -c:v "${encoder}" -b:v 4M "${out}" >"${WORK}/${encoder}.log" 2>&1 \

@@ -111,15 +111,16 @@ def check_page_patches(arrays, text):
     return len(rows)
 
 
-def signature_page_name(arrays, page_offset):
+def signature_page_name(arrays, page_offset, context_name):
+    family = "Sonoma" if context_name.endswith("_Sonoma") else "Sequoia"
     if page_offset.startswith("~"):
-        return "kMTLControlPage_Sequoia" if "kMTLControlPage_Sequoia" in arrays else "kMTLControlPage"
-    offset = int(page_offset, 16)
-    if offset == 0xE000:
-        return "kGLDriverHwInfoPage_Sequoia" if "kGLDriverHwInfoPage_Sequoia" in arrays else "kGLDriverHwInfoPage"
-    if offset == 0x8000:
-        return "kGLDriverDualQuadPage_Sequoia" if "kGLDriverDualQuadPage_Sequoia" in arrays else "kGLDriverDualQuadPage"
-    return None
+        stem = "kMTLControlPage"
+    else:
+        stem = {0xE000: "kGLDriverHwInfoPage", 0x8000: "kGLDriverDualQuadPage"}.get(int(page_offset, 16))
+    if stem is None:
+        return None
+    name = f"{stem}_{family}"
+    return name if name in arrays else stem
 
 
 def check_signatures(arrays, text):
@@ -145,7 +146,7 @@ def check_signatures(arrays, text):
         find = arrays[find_name]
         check(len(find) == len(replace), f"{find_name}/{replace_name} sizes differ")
 
-        page_name = signature_page_name(arrays, page_offset)
+        page_name = signature_page_name(arrays, page_offset, context_name)
         check(page_name is not None, f"unknown resolver pageOffset {page_offset}")
         check(page_name in arrays, f"SignaturePatch needs page image {page_name}")
         page = arrays[page_name]

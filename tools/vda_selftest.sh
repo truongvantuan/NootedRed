@@ -1,6 +1,6 @@
 #!/bin/bash
 # VDA hardware decode self-test (read-only).
-# Run after booting with -NRedVDA. Collects kernel/user-space diagnostics and decode checks.
+# Run after booting with -NRedVDA or -NRedAVC. Collects kernel/user-space diagnostics.
 set -u
 
 echo "== system =="

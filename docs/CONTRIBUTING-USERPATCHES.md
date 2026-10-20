@@ -73,6 +73,10 @@ generic `kApuAll` fallback.
 - `-NRedGLFixOff` forces it off.
 - `-NRedGLFixResolve` additionally enables the resolver fallback when an exact page image does not
   match. It does nothing without `-NRedGLFix`.
+- `-NRedGLFixSemanticMTL` forces the semantic Metal variant scanning on the shared-cache range.  GL
+  semantic fallback is enabled automatically with `-NRedGLFix`, and the Metal scanning is also enabled
+  automatically when no exact patch set matches the running build.
+- `-NRedGLFixSemanticOff` disables the semantic fallback while keeping the exact-page path.
 
 ## Current patch sites (15.8.1 only)
 
@@ -170,7 +174,12 @@ xmake f -m release -y
 xmake -y
 python3 tools/test_patchset_selection.py   # version/APU selection table
 python3 tools/test_patch_data.py           # page images, find/replace and resolver signature consistency
+python3 tools/test_gl_semantic_data.py     # semantic GL/Metal contexts against available driver images
 ```
+
+`test_gl_semantic_data.py` also accepts `--reference-repo` (the archived multi-version page fixtures)
+and `--collector-dir` (a `collect_compat_data.py` output with the 15.8.1 MTL image) for broader local
+coverage.
 
 Then install the kext, reboot, and check:
 
@@ -224,10 +233,36 @@ Before relying on the resolver for a new macOS build, extract the signatures on 
 the hit site, the resulting instructions, and the runtime behaviour. A matching context is not proof of
 semantic correctness.
 
+## Semantic fallback (cross-build GL/Metal)
+
+The semantic backend is a second, independent fallback for builds without a page image. It matches a
+masked **instruction-context window** instead of a whole page, then verifies the `find` bytes and the
+instruction form before writing a same-length replacement. The data lives in
+[`NootedRed/GLFixSemanticData.hpp`](../NootedRed/GLFixSemanticData.hpp); the mechanics and the
+Sonoma/Sequoia/Tahoe variant derivation are documented in
+[`analysis/gl-semantic-patches.md`](../analysis/gl-semantic-patches.md).
+
+Rules:
+
+- the exact-page tables still run first; the semantic backend only sees pages that did not match;
+- GL contexts are only applied to a file-backed vnode whose name contains
+  `AMDRadeonX5000GLDriver`, and only when exactly one site matches;
+- Metal variant groups only apply when every site in the group matches the same cache page, and at most
+  one group applies per page; scanning is enabled on builds without a patch set and can be forced with
+  `-NRedGLFixSemanticMTL`;
+- the GL contexts were verified against the 14, 15.8.1 and 26.7.1 drivers; the Metal groups are
+  per-build data (Sonoma/Sequoia/Tahoe) and only the 15.8.1 group has hardware validation;
+- a miss, a second match, or a `find` mismatch is a no-op.
+
+To support a new build: collect it with `tools/collect_compat_data.py`, compare `chromium/sites.json`
+with the current context, extend the data/table if needed, and add the build to
+`tools/test_gl_semantic_data.py`. Do not reuse a context that was not tested against that build.
+
 ## Safety rules
 
 - Never patch a page that failed code-signing validation.
-- Prefer exact page images; use the resolver only for explicitly tested builds.
+- Prefer exact page images; use the semantic backend or the resolver only for builds you have validated
+  against that build's driver images.
 - Do not combine this with BFixup or another user-space GL/Metal patcher.
 - Do not apply APU data to a Vega dGPU: the HwInfo model and RB+ support differ.
 - Do not write to `/System/Library/Extensions` or the dyld shared cache; all patches are in-memory.

@@ -29,7 +29,7 @@ The goal is one kext binary and one data model that:
 | Component | `master` | Feature branches | Problem |
 | --- | --- | --- | --- |
 | Patch selection | single `PagePatch` table, `-NRedGLFix` | `PatchSet{minVersion,maxVersion,ApuMask}` in `feature/multi-os-multi-apu`, `feature/tahoe-26.7.1` | version and APU are one conjunctive key |
-| Site location | exact 4 KiB page image + `find`/`replace` | `SignaturePatch` (32 B masked context), ported into `master` as an opt-in fallback | per-build snapshots; resolver is a smaller snapshot |
+| Site location | exact 4 KiB page image + `find`/`replace`; semantic context fallback in `master` | `SignaturePatch` (32 B masked context) | exact tables need per-build snapshots; semantic data is instruction-level |
 | Hardware model | `DeviceProfile` (device ID key, media all false) | VDA branch adds VCN generation/firmware/ring fields | version range unused; media fields unreachable |
 | VCN data | none | `VCNKernelData.hpp`, `VDAVAData.hpp`, `VDAGVAData.hpp`, generators with `--check` | all data pinned to 15.8.1 / `0x1638` |
 | Data collection | `platform-data/`, `tools/collect_compat_data.py`, importer | — | older datasets predate the focused collector; see [collector](../tools/README-collect-compat-data.md) |
@@ -208,8 +208,13 @@ has C++ symbols. A function-scoped search makes unrelated code churn irrelevant 
 positives by orders of magnitude. `PatcherPlus.hpp` already has `jumpInstDestination()`, so the
 instruction decoder has a place to live.
 
-The `research/patch-resolver` prototype is the seed of L1–L3. Its 32-byte full-mask contexts are still
-per-build snapshots, and its Metal signatures have no module scope; both are Milestone 3 work.
+The `research/patch-resolver` prototype was the seed of L1–L3 and is still available as an opt-in
+resolver (`-NRedGLFixResolve`). The semantic backend (`GLFixSemanticData.hpp` + `patchSemanticPage`) is
+the L1 path for the Chromium GL sites: it uses instruction-context windows, verifies the instruction form
+at the site, rejects ambiguity, and keeps the exact-page tables as the L0 fast path. Its Metal variants
+are grouped per build (Sonoma/Sequoia/Tahoe) and only apply when every site in the group matches the same
+cache page; Metal scanning is automatic on builds without a patch set and can be forced with
+`-NRedGLFixSemanticMTL`. See [`analysis/gl-semantic-patches.md`](../analysis/gl-semantic-patches.md).
 
 ### 4.8 Support levels and logging contract
 
@@ -302,6 +307,8 @@ illustrative until Milestone 4):
 | 15.8.1 (24H32) | Renoir `0x1638` | VDA decode/encode | validated (`-NRedVDA`, default off) | `analysis/vda-1581-hardware-validation.md` |
 | 15.8.1 (24H32) | other VCN 2.x APUs (`0x1636`/`0x164C`/`0x15E7`) | VDA decode/encode | experimental (profile enables VCN0; bridge/ABI gates still apply) | `DeviceProfile` media policy |
 | 26.7.1 | `0x1638`/`0x164c` | GL/Metal fix | experimental | `feature/tahoe-26.7.1` data, unverified |
+| 14.x / 15.8.1 / 26.7.1 | any gfx9 APU | GL fix (A1/A2) | semantic fallback validated offline | `analysis/gl-semantic-patches.md` |
+| 14.x / 15.8.1 / 26.7.1 | any gfx9 APU | Metal fix | semantic variants, experimental | Metal contexts per known build; 26.x uses the direct-field variant |
 | any | Raven/Raven2/Picasso | GL/Metal fix | experimental | code-compatible, no hardware validation |
 | any | Raven/Raven2/Picasso | VDA | unavailable | VCN1 not implemented |
 | other builds | any | any | no-op | no target identity match |
@@ -377,12 +384,17 @@ turns the feature off with a reason; adding a build only touches generated data.
 
 - Function/symbol-scoped anchors, masked contexts, instruction decode before/after write, ambiguity
   rejection, module/page scoping for both GL and MTL.
-- The resolver prototype is now in `master` (`-NRedGLFixResolve` / QA `-NRedGLFixResolveOnly`); harden it
-to L1–L3 and keep L0 as the validated fast path.
-- Generate anchors from symbols in `gen_patch_data.py`; validate anchor uniqueness offline.
+- The semantic backend is now in `master` (`GLFixSemanticData.hpp` + `patchSemanticPage`) as the L1
+  path for the Chromium GL sites, with the exact-page tables kept as the L0 fast path.
+- Metal variants are grouped per known build (Sonoma/Sequoia/Tahoe); the Tahoe direct-field variant is
+  preferred for 26.x, and the gate/allow groups remain as fallbacks. A new build needs a new context
+  variant derived from its MTL image.
+- The resolver prototype remains available as an opt-in QA path (`-NRedGLFixResolve` /
+  `-NRedGLFixResolveOnly`).
 
-Acceptance: resolver QA mode (`-NRedGLFixResolveOnly`) still passes on 15.8.1; a build whose page
-changed but whose function bytes did not is handled without new snapshots; ambiguity is a no-op.
+Acceptance: resolver QA mode still passes on 15.8.1; `tools/test_gl_semantic_data.py` validates the GL
+contexts against 14/15.8.1/26.7.1 and the Metal fixtures; a build whose page changed but whose
+instruction context did not is handled without new snapshots; ambiguity is a no-op.
 
 ### Milestone 4 — Manifest pipeline
 
@@ -416,9 +428,11 @@ validated matrix; VCN1 either works on hardware or is explicitly unavailable.
 ## 11. References
 
 - [Contributing to UserPatches](CONTRIBUTING-USERPATCHES.md)
+- [Patch architecture: GLFIX and VDA/VCN](Patch-Architecture.md)
 - [Chromium/Electron fix usage](Chromium-Fix-Usage.md)
 - [Device profile / media capability layer](Device-Profile.md)
 - [`analysis/multi-os-multi-apu.md`](../analysis/multi-os-multi-apu.md)
+- [`analysis/gl-semantic-patches.md`](../analysis/gl-semantic-patches.md)
 - [`analysis/patch-resolver.md`](../analysis/patch-resolver.md)
 - [VDA implementation plan](VDA-Implementation-Plan.md) and
   [`analysis/vda-1581-hardware-validation.md`](../analysis/vda-1581-hardware-validation.md)

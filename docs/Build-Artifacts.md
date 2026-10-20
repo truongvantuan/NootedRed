@@ -19,7 +19,7 @@ For example:
 
 ```text
 build/branches/feature-tahoe-26.7.1/macosx/x86_64/release/NootedRed.kext
-build/branches/feature-tahoe-26.7.1/macosx/x86_64/release/NootedRed-0.9.0-RELEASE.zip
+build/branches/feature-tahoe-26.7.1/macosx/x86_64/release/NootedRed-0.9.1-RELEASE.zip
 ```
 
 A detached HEAD uses `detached-<short-sha>`. To override:

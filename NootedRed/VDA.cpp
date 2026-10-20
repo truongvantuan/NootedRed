@@ -85,4 +85,3 @@ void VDA::processPatcher()
     NRed::singleton().setProp32("NRedVDAMediaEnabled", 0);
     NRed::singleton().setProp32("NRedVCNGeneration", vcnGeneration);
 }
-

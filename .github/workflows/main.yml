@@ -43,6 +43,13 @@ jobs:
           xmake f -m release -a x86_64 -y
           sh tools/build-branch.sh -y
 
+      - name: Validate combined patch behavior
+        run: |
+          python3 tools/test_patch_data.py
+          python3 tools/test_patchset_selection.py
+          python3 tools/test_gl_semantic_data.py
+          python3 tools/test_patch_dispatch.py
+
       - name: Verify and stage release
         run: |
           release_dir="build/branches/$NRED_BUILD_BRANCH/macosx/x86_64/release"

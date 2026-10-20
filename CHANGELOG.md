@@ -1,5 +1,14 @@
 # Change log
 
+## v0.9.1 — combined fork (2026-10-20)
+
+- Merge Weachy `ea71183` and xiaot-evo `11dac5c`, retaining local compiler and CI fixes.
+- Preserve Sonoma/Sequoia VDA support and add AVC-only mode and minor-series build eligibility.
+- Combine OS-specific exact pages, semantic GL/Metal matching, and Sonoma/Sequoia resolver fallback.
+- Prefer the direct-field Tahoe Metal fix; retain the alternative semantic variant.
+- Keep VDA exact pages active during GL resolver QA; honor graphics profile and fallback-disable gates.
+- Update host validation for all OS fixtures and AVC-aware diagnostics. Hardware validation is pending.
+
 ## v0.8.10 (15/05/2026)
 
 ### Enhancements

@@ -6,6 +6,11 @@
 It does **not** guess offsets. The spec must supply the page offset/VA and the
 exact find/replace bytes for that build.
 
+If the build has no spec yet, check whether the semantic fallback already covers the GL sites
+(`Semantic patch applied` in the log; see `analysis/gl-semantic-patches.md`) before spending time on a
+new page snapshot. The semantic data is instruction-context based and validated for macOS 14, 15.8.1 and
+26.7.1 GL drivers.
+
 ## Requirements
 
 - Run on the target macOS install, with the **unmodified** `AMDRadeonX5000GLDriver`
