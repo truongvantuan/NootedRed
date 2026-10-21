@@ -17,6 +17,7 @@ PAGE = 0x1000
 
 KERNEL_DATA_24H32 = ROOT / "NootedRed" / "VCNData" / "24H32.hpp"
 KERNEL_DATA_23J631 = ROOT / "NootedRed" / "VCNData" / "23J631.hpp"
+KERNEL_DATA_25G241 = ROOT / "NootedRed" / "VCNData" / "25G241.hpp"
 VCN_DATA = ROOT / "NootedRed" / "VCNData.hpp"
 VCN_SELECTOR = ROOT / "NootedRed" / "VCNData.cpp"
 VCN_BRIDGE = ROOT / "NootedRed" / "VCNBridge.cpp"
@@ -100,13 +101,16 @@ def parse_page_patches(text: str, label: str) -> tuple[int, int, set[str]]:
 def main() -> int:
     sequoia_text = KERNEL_DATA_24H32.read_text()
     sonoma_text = KERNEL_DATA_23J631.read_text()
+    tahoe_text = KERNEL_DATA_25G241.read_text()
     sequoia = parse_call_patches(sequoia_text, "24H32 CallPatches")
     sonoma = parse_call_patches(sonoma_text, "23J631 CallPatches")
-    if len(sequoia) != 20 or len(sonoma) != 20:
-        raise Failure("both VCN call-site tables must contain 20 sites")
-    if sonoma == sequoia:
-        raise Failure("Sonoma and Sequoia call-site tables are identical; expected build-specific data")
-    if 'Build[] = "24H32"' not in sequoia_text or 'Build[] = "23J631"' not in sonoma_text:
+    tahoe = parse_call_patches(tahoe_text, "25G241 CallPatches")
+    if len(sequoia) != 20 or len(sonoma) != 20 or len(tahoe) != 20:
+        raise Failure("all VCN call-site tables must contain 20 sites")
+    if sonoma == sequoia or tahoe == sequoia:
+        raise Failure("VCN build tables are identical; expected build-specific data")
+    if ('Build[] = "24H32"' not in sequoia_text or 'Build[] = "23J631"' not in sonoma_text
+            or 'Build[] = "25G241"' not in tahoe_text):
         raise Failure("per-build headers do not declare their exact build strings")
     if 'static_assert(kCallPatchCount <= kMaxCallPatches' not in sequoia_text:
         raise Failure("24H32 call-site table has no compile-time bound check")
@@ -114,14 +118,15 @@ def main() -> int:
         raise Failure("23J631 call-site table has no compile-time bound check")
     if 'DriverSHA256_6000' not in sequoia_text or 'No locally generated identity' not in sonoma_text:
         raise Failure("per-build headers do not declare identity availability")
-    print(f"kernel tables: 24H32 {len(sequoia)} sites, 23J631 {len(sonoma)} sites")
+    print(f"kernel tables: 24H32 {len(sequoia)} sites, 23J631 {len(sonoma)} sites, 25G241 {len(tahoe)} sites")
 
     data_text = VCN_DATA.read_text()
     selector_text = VCN_SELECTOR.read_text()
     for token in ("findVariant", "variantForDarwin", "hasVariantForDarwin", "kMaxCallPatches"):
         if token not in data_text:
             raise Failure(f"VCNData.hpp is missing {token!r}")
-    for token in ("Build23J631::kData", "Build24H32::kData", "buildMatches", "osversion[i] == '\\0'"):
+    for token in ("Build23J631::kData", "Build24H32::kData", "Build25G241::kData", "buildMatches",
+                  "osversion[i] == '\\0'"):
         if token not in selector_text:
             raise Failure(f"VCNData.cpp is missing {token!r}")
     if 'major() == 23' in selector_text or '"23J"' in selector_text or '"24H"' in selector_text:
@@ -140,6 +145,8 @@ def main() -> int:
         "Sonoma VA": (ROOT / "NootedRed" / "VDAVADataSonoma.hpp", "14.8.9", 9, 12),
         "Sequoia GVA": (ROOT / "NootedRed" / "VDAGVAData.hpp", "15.8.1", 1, 1),
         "Sonoma GVA": (ROOT / "NootedRed" / "VDAGVADataSonoma.hpp", "14.8.9", 1, 1),
+        "Tahoe VA": (ROOT / "NootedRed" / "VDAVADataTahoe.hpp", "26.7.1", 10, 12),
+        "Tahoe GVA": (ROOT / "NootedRed" / "VDAGVADataTahoe.hpp", "26.7.1", 1, 1),
     }
     for label, (path, build, expected_records, expected_sites) in page_cases.items():
         text = path.read_text()

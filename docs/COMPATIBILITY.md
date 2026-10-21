@@ -19,8 +19,8 @@ corresponding feature test on that exact build **and** APU.
 | macOS build | Darwin | Kernel / graphics | GLFIX GL | GLFIX Metal | VDA/VCN kernel bridge | VDA user-space (VA + AppleGVA) | HEVC encode |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **15.8.1 (24H32)** | 24.6.0 | supported | **validated** (`0x1638`) | **validated** (`0x1638`) | **validated** (`24H32` data) | **validated** (`VDAVAData`, `VDAGVAData`) | **validated** (`0x1638`) |
-| **14.8.9 (23J631)** | 23.6.0 | supported | experimental (semantic, offline) | experimental (semantic, offline) | experimental (imported `23J631` data, byte-gated) | experimental (imported `VDAVADataSonoma`, `VDAGVADataSonoma`) | experimental (imported data) |
-| **26.7.1 (25G241)** | 25.6.0 | supported | experimental (`TahoePatchData`, offline) | experimental (`TahoePatchData` direct-field, offline) | **unsupported** (no `25G241` kernel data) | **unsupported** (no macOS 26 VA/AppleGVA data) | **unsupported** |
+| **14.8.9 (23J631)** | 23.6.0 | supported | experimental (exact Sonoma pages + resolver, offline) | experimental (exact Sonoma pages + resolver, offline) | experimental (imported `23J631` data, byte-gated) | experimental (imported `VDAVADataSonoma`, `VDAGVADataSonoma`) | experimental (imported data) |
+| **26.7.1 (25G241)** | 25.6.0 | supported | experimental (`TahoePatchData`, offline) | experimental (`TahoePatchData` gate/allow, offline) | experimental (`25G241` data, hardware pending) | experimental (`VDAVADataTahoe`, `VDAGVADataTahoe`, hardware pending) | experimental (26.7.1 data, hardware pending) |
 | other 15.x (`24H*`) | 24.x | supported | experimental/no-op (semantic) | experimental/no-op (semantic) | **unsupported** (exact `24H32` only) | **unsupported** | **unsupported** |
 | other 14.x (`23J*`) | 23.x | supported | experimental/no-op (semantic) | experimental/no-op (semantic) | **unsupported** (exact `23J631` only) | **unsupported** | **unsupported** |
 | other 26.x | 25.x | supported | **no-op/unsupported** (exact `25G241` pages only) | **no-op/unsupported** (exact `25G241` pages only) | **unsupported** | **unsupported** | **unsupported** |
@@ -30,8 +30,8 @@ Notes:
 
 - "Kernel / graphics" means the NootedRed kext itself loads and the existing X5000/HWLibs/display
   patches run. It does not imply GLFIX or VDA.
-- GLFIX is enabled by default (`-NRedGLFix` confirms it; `-NRedGLFixOff` disables it). The semantic
-  fallback is a no-op when its instruction contexts do not match.
+- GLFIX is opt-in with `-NRedGLFix` (`-NRedGLFixOff` forces it off). The semantic fallback is a no-op
+  when its instruction contexts do not match.
 - VDA/VCN is opt-in (`-NRedVDA`, or `-NRedAVC` for AVC-only). Without matching data the boot argument is
   ignored and the system stays on software decode.
 - macOS 26.7.1 GL/MTL images are from the `25G241` external datasets; this project has not booted
@@ -43,10 +43,10 @@ Notes:
 
 | APU / device ID | VCN generation | GLFIX (15.8.1) | VDA/VCN (15.8.1) | VDA/VCN (26.7.1) |
 | --- | --- | --- | --- | --- |
-| Renoir / Green Sardine `0x1638` | VCN 2.2 | **validated** | **validated** | **unsupported** (data pending) |
-| Renoir `0x1636` | VCN 2.2 | experimental | experimental (same 15.8.1 data; hardware not validated) | **unsupported** |
-| Cezanne `0x164C` | VCN 2.2 | experimental | experimental | **unsupported** |
-| Barcelo `0x15E7` | VCN 2.2 | experimental | experimental | **unsupported** |
+| Renoir / Green Sardine `0x1638` | VCN 2.2 | **validated** | **validated** | experimental (data present, hardware pending) |
+| Renoir `0x1636` | VCN 2.2 | experimental | experimental (same 15.8.1 data; hardware not validated) | experimental (data present, hardware pending) |
+| Cezanne `0x164C` | VCN 2.2 | experimental | experimental | experimental (data present, hardware pending) |
+| Barcelo `0x15E7` | VCN 2.2 | experimental | experimental | experimental (data present, hardware pending) |
 | Raven `0x15DD` | VCN 1.x | experimental | **unsupported** (no VCN1 path) | **unsupported** |
 | Raven2 / Picasso `0x15D8` | VCN 1.x | experimental | **unsupported** (no VCN1 path) | **unsupported** |
 
@@ -57,26 +57,26 @@ recorded hardware validation.
 
 | Feature | Flag | 15.8.1 | 14.8.9 | 26.7.1 |
 | --- | --- | --- | --- | --- |
-| GL dual-source fix | `-NRedGLFix` (default on) | validated | experimental (semantic) | experimental (exact 25G241 pages) |
-| Metal dual-quad fix | included with GLFIX | validated | experimental (semantic) | experimental (direct-field, runtime pending) |
-| VCN2 hardware decode | `-NRedVDA` | validated | experimental (imported) | unsupported |
-| AVC-only mode | `-NRedAVC` | validated | experimental (imported) | unsupported |
-| VCN kernel bridge | `-NRedVDA`/`-NRedAVC` | validated | experimental (byte-gated) | unsupported |
-| VDA user-space VA/GVA | with VDA flags | validated | experimental (imported) | unsupported |
-| HEVC encode | `-NRedVDA` | validated | experimental (imported) | unsupported |
+| GL dual-source fix | `-NRedGLFix` | validated | experimental (exact Sonoma pages) | experimental (exact 25G241 pages) |
+| Metal dual-quad fix | included with GLFIX | validated | experimental (exact Sonoma pages) | experimental (gate/allow, hardware pending) |
+| VCN2 hardware decode | `-NRedVDA` | validated | experimental (imported) | experimental (25G241, hardware pending) |
+| AVC-only mode | `-NRedAVC` | validated | experimental (imported) | experimental (25G241, hardware pending) |
+| VCN kernel bridge | `-NRedVDA`/`-NRedAVC` | validated | experimental (byte-gated) | experimental (25G241) |
+| VDA user-space VA/GVA | with VDA flags | validated | experimental (imported) | experimental (`VDAVADataTahoe`/GVA) |
+| HEVC encode | `-NRedVDA` | validated | experimental (imported) | experimental (25G241, hardware pending) |
 
 ## What "macOS 26 support" means here
 
 - The kext range already includes macOS 26 (Darwin 25) and the GLFIX/Metal 26.7.1 data path exists.
-- **VDA/VCN on macOS 26 is not implemented** in this tree: there is no `25G241` kernel-collection
-  call-site data and no macOS 26 `AMDRadeonVADriver2`/AppleGVA page data. Fabricating a variant from
-  the 15.8.1 tables would violate the exact-build/byte-verification contract.
-- To add it, collect on the target 26.7.1 machine:
-  - `SystemKernelExtensions.kc` (X5000/X6000 symbols and text);
-  - `AMDRadeonVADriver2` and AppleGVA shared-cache images/pages;
-  - the platform metadata used by `tools/collect_compat_data.py --include-kc`.
-  Then generate a `VCNData/25G241.hpp` variant and the VA/GVA tables, add selection entries, and run
-  the hardware validation on the target APU before changing the matrix.
+- **VDA/VCN on macOS 26** now has `25G241` kernel call-site data and `VDAVADataTahoe`/`VDAGVADataTahoe`,
+  but is still experimental until a real 26.7.1 boot/decode/encode test passes. Other 26.x builds remain
+  unsupported because the data is exact-build and byte-gated.
+- `25G241` kernel data is now in `VCNData/25G241.hpp`; the user-space VDA tables are
+  `VDAVADataTahoe.hpp` / `VDAGVADataTahoe.hpp`. The remaining work is a real 26.7.1 boot and
+  decode/encode test on the target APU; only then can this row become `validated`.
+- For another 26.x build, collect `SystemKernelExtensions.kc`, `AMDRadeonVADriver2`, AppleGVA pages and
+  platform metadata on that build, generate the same data set, and hardware-validate it; 15.8.1 or
+  26.7.1 data must not be reused for a different build.
 
 ## Evidence
 

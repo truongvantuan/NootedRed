@@ -111,14 +111,15 @@ def check_page_patches(arrays, text):
     return len(rows)
 
 
-def signature_page_name(arrays, page_offset):
+def signature_page_name(arrays, page_offset, context_name=""):
+    suffix = "_Sonoma" if "Sonoma" in context_name else ""
     if page_offset.startswith("~"):
-        return "kMTLControlPage"
+        return "kMTLControlPage" + suffix
     offset = int(page_offset, 16)
     if offset == 0xE000:
-        return "kGLDriverHwInfoPage"
+        return "kGLDriverHwInfoPage" + suffix
     if offset == 0x8000:
-        return "kGLDriverDualQuadPage"
+        return "kGLDriverDualQuadPage" + suffix
     return None
 
 
@@ -145,7 +146,7 @@ def check_signatures(arrays, text):
         find = arrays[find_name]
         check(len(find) == len(replace), f"{find_name}/{replace_name} sizes differ")
 
-        page_name = signature_page_name(arrays, page_offset)
+        page_name = signature_page_name(arrays, page_offset, context_name)
         check(page_name is not None, f"unknown resolver pageOffset {page_offset}")
         check(page_name in arrays, f"SignaturePatch needs page image {page_name}")
         page = arrays[page_name]
@@ -171,18 +172,21 @@ def check_patch_sets(text):
         check("KernelVersion" not in name, f"PatchSet {name}: malformed entry")
     check((24, 6) in versions, "missing a Darwin 24.6 (macOS 15.8.1) PatchSet")
     check((25, 6) in versions, "missing a Darwin 25.6 (macOS 26.7.1) PatchSet")
+    check((23, 0) in versions, "missing a Darwin 23.x (macOS 14 Sonoma) PatchSet")
     return len(sets)
 
 
 def main():
     user_patches = ROOT / "NootedRed" / "UserPatches.cpp"
+    sonoma = ROOT / "NootedRed" / "UserPatchesSonoma.inc"
     tahoe = ROOT / "NootedRed" / "TahoePatchData.hpp"
-    for path in (user_patches, tahoe):
+    for path in (user_patches, sonoma, tahoe):
         check(path.is_file(), f"missing {path}")
 
     arrays, text = load_arrays(user_patches)
-    tahoe_arrays, _ = load_arrays(tahoe)
-    arrays.update(tahoe_arrays)
+    for extra in (sonoma, tahoe):
+        extra_arrays, _ = load_arrays(extra)
+        arrays.update(extra_arrays)
 
     patches = check_page_patches(arrays, text)
     signatures = check_signatures(arrays, text)
@@ -198,6 +202,7 @@ def main():
           "Tahoe table must not use the experimental direct-field Metal form")
     check("Exact patch set matched; semantic scanning disabled" in text,
           "exact patch sets must disable redundant semantic scanning")
+    check("kGLDriverPatches_Sonoma" in text, "missing Sonoma patch table")
 
     print(f"ok: {patches} page patch(es), {signatures} resolver signature(s), {sets} patch set(s)")
     print("all user-space patch data checks passed")

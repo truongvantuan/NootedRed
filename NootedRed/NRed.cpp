@@ -72,6 +72,12 @@
 #if __has_include(<VDAGVAData.hpp>)
 #include <VDAGVAData.hpp>
 #endif
+#if __has_include(<VDAVADataTahoe.hpp>)
+#include <VDAVADataTahoe.hpp>
+#endif
+#if __has_include(<VDAGVADataTahoe.hpp>)
+#include <VDAGVADataTahoe.hpp>
+#endif
 
 static NRed moduleInstance;
 
@@ -101,6 +107,20 @@ void NRed::init()
         if constexpr (sizeof(VDAGVADataSonoma::Patches) / sizeof(VDAGVADataSonoma::Patches[0]) > 0) {
             UserPatches::singleton().registerVDAFix(
                 VDAGVADataSonoma::Patches, sizeof(VDAGVADataSonoma::Patches) / sizeof(VDAGVADataSonoma::Patches[0]));
+        }
+#endif
+    }
+    else if (currentKernelVersion().major() == 25) {
+#if __has_include(<VDAVADataTahoe.hpp>)
+        if constexpr (sizeof(VDAVADataTahoe::Patches) / sizeof(VDAVADataTahoe::Patches[0]) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAVADataTahoe::Patches,
+                                                    sizeof(VDAVADataTahoe::Patches) / sizeof(VDAVADataTahoe::Patches[0]));
+        }
+#endif
+#if __has_include(<VDAGVADataTahoe.hpp>)
+        if constexpr (sizeof(VDAGVADataTahoe::Patches) / sizeof(VDAGVADataTahoe::Patches[0]) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAGVADataTahoe::Patches,
+                                                    sizeof(VDAGVADataTahoe::Patches) / sizeof(VDAGVADataTahoe::Patches[0]));
         }
 #endif
     }

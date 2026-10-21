@@ -23,6 +23,7 @@
 #include <VCNData.hpp>
 #include <VCNData/23J631.hpp>
 #include <VCNData/24H32.hpp>
+#include <VCNData/25G241.hpp>
 
 namespace
 {
@@ -30,6 +31,7 @@ namespace
     const VCNData::Variant* const kVariants[] = {
         &VCNData::Build23J631::kData,
         &VCNData::Build24H32::kData,
+        &VCNData::Build25G241::kData,
     };
 
     bool buildMatches(const char* const osversion, const char* const build)
