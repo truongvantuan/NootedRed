@@ -60,7 +60,6 @@ public:
     };
 
     struct PagePatch;
-    struct SignaturePatch;
 
     // A patch set valid for a macOS version range and an APU-family subset.  The first matching set is
     // selected once per boot; page images remain the last line of defence, so a set whose images do not
@@ -73,28 +72,6 @@ public:
         ApuMask                         apus;
         const PagePatch*                patches;
         size_t                          count;
-
-        // Optional resolver entries used when the exact page image does not match (for example another
-        // macOS build).  Only active with the `-NRedGLFixResolve` boot argument.
-        const SignaturePatch*           signatures{nullptr};
-        size_t                          signatureCount{0};
-    };
-
-    // A masked-context signature used by the resolver backend.  `context` contains a window around the
-    // patch site; 0xFF mask bytes must match, 0x00 bytes are wildcards.  `patchOffset` is relative to the
-    // start of the matched context.  `pageOffset` can restrict the signature to a file/cache page offset;
-    // pass UINT64_MAX for no restriction.
-    struct SignaturePatch
-    {
-        const UInt8* context;
-        const UInt8* mask;
-        size_t       contextSize;
-        size_t       patchOffset;
-        const UInt8* replace;
-        size_t       replaceSize;
-        size_t       skip;
-        size_t       count;
-        UInt64       pageOffset;
     };
 
     // Lookup-style patch for one user-space Mach-O image.
@@ -217,13 +194,6 @@ private:
     const PatchSet* patchSets{nullptr};
     size_t          patchSetCount{0};
 
-    // Resolver fallback selected together with the patch set.  Exact page images stay the primary path;
-    // this only runs once the exact image does not match and the user opted in with `-NRedGLFixResolve`.
-    const SignaturePatch* signatures{nullptr};
-    size_t                signatureCount{0};
-    bool                  resolverEnabled{false};
-    bool                  resolverOnly{false};
-
     // Generic semantic backend.  GL entries are enabled together with the GL fix and only patch the
     // vnode-backed AMDRadeonX5000GLDriver; Metal variants scan shared-cache pages and are opt-in because
     // that backend validates much more data per boot.
@@ -267,8 +237,7 @@ private:
     auto installUserPatcher() -> bool;
     auto installNativePagePatcher(KernelPatcher& patcher) -> bool;
     auto buildNativePatches() -> bool;
-    void patchNativePage(const void* data, UInt64 pageOffset, void* vnode, bool cachePage);
-    void patchSignaturePage(const void* data, UInt64 pageOffset);
+    void patchNativePage(const void* data, void* vnode, bool cachePage);
 
     // Generic semantic backend: matches instruction-context windows instead of full page images.  Returns
     // true when at least one site was patched.  `vnode` is the code-signing vnode for file-backed pages and
@@ -278,8 +247,7 @@ private:
 
     // Returns true when `data` is an already-patched version of an exact native page.  This is the normal
     // state for a page after the first process validated it: the kernel keeps the patched bytes, so a later
-    // validation would otherwise fall through to the resolver and scan a page that no longer has the
-    // original signature context.
+    // validation must not scan the page again.
     auto isPatchedPage(const NativePage& page, const UInt8* data) const -> bool;
 
     static void      wrapCsValidatePage(void* vnode, void* pager, UInt64 pageOffset, const void* data, int* validated,

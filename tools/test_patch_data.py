@@ -6,8 +6,6 @@ Parses the byte arrays and tables in `NootedRed/UserPatches.cpp` and
 
   * every `PagePatch` references known arrays, and `find`/`replace` sizes agree;
   * each site's `find` sequence occurs in its page image at least `skip + count` times;
-  * every resolver `SignaturePatch` references known arrays, its masked context occurs in the
-    expected page image, and the site bytes under `patchOffset` are the matching `find` sequence;
   * the version/APU `PatchSet` table is ordered and versioned sensibly.
 
 This does not load the kext and does not need a Mac; it is meant to catch table regressions before a
@@ -26,12 +24,6 @@ HEX_BYTE_RE = re.compile(r"0x([0-9A-Fa-f]{2})")
 PATCH_ROW_RE = re.compile(
     r"\{\s*UserPatcher::FileSegment::SegmentTextText\s*,\s*"
     r"(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\d+)\s*\}",
-    re.S,
-)
-
-SIGNATURE_ROW_RE = re.compile(
-    r"\{\s*(\w+)\s*,\s*(\w+)\s*,\s*sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\w+)\s*,\s*"
-    r"sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(0x[0-9A-Fa-f]+|~static_cast<UInt64>\(0\))\s*\}",
     re.S,
 )
 
@@ -111,55 +103,6 @@ def check_page_patches(arrays, text):
     return len(rows)
 
 
-def signature_page_name(arrays, page_offset, context_name=""):
-    suffix = "_Sonoma" if "Sonoma" in context_name else ""
-    if page_offset.startswith("~"):
-        return "kMTLControlPage" + suffix
-    offset = int(page_offset, 16)
-    if offset == 0xE000:
-        return "kGLDriverHwInfoPage" + suffix
-    if offset == 0x8000:
-        return "kGLDriverDualQuadPage" + suffix
-    return None
-
-
-def check_signatures(arrays, text):
-    rows = list(SIGNATURE_ROW_RE.finditer(text))
-    check(rows, "no SignaturePatch rows found")
-    for row in rows:
-        context_name, mask_name, size_name, patch_offset, replace_name, replace_size_name, skip, count, page_offset = (
-            row.groups()
-        )
-        patch_offset, skip, count = int(patch_offset), int(skip), int(count)
-        check(size_name == context_name, f"sizeof({size_name}) should refer to {context_name}")
-        check(replace_size_name == replace_name, f"sizeof({replace_size_name}) should refer to {replace_name}")
-        for name in (context_name, mask_name, replace_name):
-            check(name in arrays, f"SignaturePatch references unknown array {name}")
-        context, mask, replace = arrays[context_name], arrays[mask_name], arrays[replace_name]
-        check(len(mask) == len(context), f"{mask_name} mask length != {context_name} context length")
-        check(len(replace) > 0 and patch_offset + len(replace) <= len(context),
-              f"{context_name}: patchOffset {patch_offset} + {len(replace)} exceeds context length {len(context)}")
-        check(count > 0, f"{context_name}: count is zero")
-
-        find_name = replace_name.replace("Replace", "Find")
-        check(find_name != replace_name and find_name in arrays, f"missing {find_name} for {replace_name}")
-        find = arrays[find_name]
-        check(len(find) == len(replace), f"{find_name}/{replace_name} sizes differ")
-
-        page_name = signature_page_name(arrays, page_offset, context_name)
-        check(page_name is not None, f"unknown resolver pageOffset {page_offset}")
-        check(page_name in arrays, f"SignaturePatch needs page image {page_name}")
-        page = arrays[page_name]
-        check(len(page) == 0x1000, f"{page_name} must be one 4 KiB page")
-
-        offsets = find_all(page, context)
-        check(offsets, f"{context_name} context not found in {page_name}")
-        for offset in offsets:
-            site = page[offset + patch_offset : offset + patch_offset + len(replace)]
-            check(site == find, f"{context_name}: site at {offset:#x}+{patch_offset} is not {find_name}")
-    return len(rows)
-
-
 def check_patch_sets(text):
     sets = list(PATCH_SET_RE.finditer(text))
     check(len(sets) >= 2, "no PatchSet rows found")
@@ -189,7 +132,6 @@ def main():
         arrays.update(extra_arrays)
 
     patches = check_page_patches(arrays, text)
-    signatures = check_signatures(arrays, text)
     sets = check_patch_sets(text)
 
     # Regression guard for the 26.7.1 stutter report: the Tahoe patch table must use the same
@@ -204,7 +146,7 @@ def main():
           "exact patch sets must disable redundant semantic scanning")
     check("kGLDriverPatches_Sonoma" in text, "missing Sonoma patch table")
 
-    print(f"ok: {patches} page patch(es), {signatures} resolver signature(s), {sets} patch set(s)")
+    print(f"ok: {patches} page patch(es), {sets} patch set(s)")
     print("all user-space patch data checks passed")
 
 

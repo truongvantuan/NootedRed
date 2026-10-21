@@ -303,7 +303,7 @@ def collect_metadata(root: Path, warnings: list[str]) -> dict:
     write_text(meta / "coremedia-defaults.txt", run(["defaults", "read", "com.apple.coremedia"]).get("stdout", ""))
 
     nootedred_loaded = "org.ChefKiss.NootedRed" in kexts or "org.ChefKiss.NootedRed" in kextstat
-    flags = [flag for flag in ("-NRedGLFix", "-NRedVDA", "-NRedGLFixResolve", "-NRedGLFixResolveOnly")
+    flags = [flag for flag in ("-NRedGLFix", "-NRedVDA")
              if flag in boot_args]
     environment = {
         "boot_args": boot_args,
