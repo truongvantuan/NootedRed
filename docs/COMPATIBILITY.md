@@ -19,7 +19,7 @@ corresponding feature test on that exact build **and** APU.
 | macOS build | Darwin | Kernel / graphics | GLFIX GL | GLFIX Metal | VDA/VCN kernel bridge | VDA user-space (VA + AppleGVA) | HEVC encode |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **15.8.1 (24H32)** | 24.6.0 | supported | **validated** (`0x1638`) | **validated** (`0x1638`) | **validated** (`24H32` data) | **validated** (`VDAVAData`, `VDAGVAData`) | **validated** (`0x1638`) |
-| **14.8.9 (23J631)** | 23.6.0 | supported | experimental (exact Sonoma pages + resolver, offline) | experimental (exact Sonoma pages + resolver, offline) | experimental (imported `23J631` data, byte-gated) | experimental (imported `VDAVADataSonoma`, `VDAGVADataSonoma`) | experimental (imported data) |
+| **14.8.9 (23J631)** | 23.6.0 | supported | experimental (exact Sonoma pages + semantic fallback, offline) | experimental (exact Sonoma pages + semantic fallback, offline) | experimental (imported `23J631` data, byte-gated) | experimental (imported `VDAVADataSonoma`, `VDAGVADataSonoma`) | experimental (imported data) |
 | **26.7.1 (25G241)** | 25.6.0 | supported | experimental (`TahoePatchData`, offline) | experimental (`TahoePatchData` gate/allow, offline) | experimental (`25G241` data, hardware pending) | experimental (`VDAVADataTahoe`, `VDAGVADataTahoe`, hardware pending) | experimental (26.7.1 data, hardware pending) |
 | other 15.x (`24H*`) | 24.x | supported | experimental/no-op (semantic) | experimental/no-op (semantic) | **unsupported** (exact `24H32` only) | **unsupported** | **unsupported** |
 | other 14.x (`23J*`) | 23.x | supported | experimental/no-op (semantic) | experimental/no-op (semantic) | **unsupported** (exact `23J631` only) | **unsupported** | **unsupported** |
@@ -36,8 +36,9 @@ Notes:
   ignored and the system stays on software decode.
 - macOS 26.7.1 GL/MTL images are from the `25G241` external datasets; this project has not booted
   them on hardware itself.
-- Other 15.x/14.x builds can still use the semantic GL path, but the VCN/VDA tables are exact-build and
-  therefore intentionally unavailable.
+- Other 15.x/14.x builds can still use the semantic GL path (14.x also keeps semantic scanning when its
+  exact Sonoma pages are selected), but the VCN/VDA tables are exact-build and therefore intentionally
+  unavailable.
 
 ## APU matrix
 

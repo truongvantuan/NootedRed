@@ -172,7 +172,7 @@ def check_patch_sets(text):
         check("KernelVersion" not in name, f"PatchSet {name}: malformed entry")
     check((24, 6) in versions, "missing a Darwin 24.6 (macOS 15.8.1) PatchSet")
     check((25, 6) in versions, "missing a Darwin 25.6 (macOS 26.7.1) PatchSet")
-    check((23, 0) in versions, "missing a Darwin 23.x (macOS 14 Sonoma) PatchSet")
+    check((23, 6) in versions, "missing a Darwin 23.6 (macOS 14.8.x Sonoma) PatchSet")
     return len(sets)
 
 

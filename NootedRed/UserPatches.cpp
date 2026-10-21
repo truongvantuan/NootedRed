@@ -917,35 +917,6 @@ static const UInt8 kGLDriverDualQuadPage[] = {
         {kResolverSetzCtx, kResolverMask32, sizeof(kResolverSetzCtx), 16, kMTLAllowReplace,
          sizeof(kMTLAllowReplace), 0, 1, ~static_cast<UInt64>(0)},
     };
-    // macOS 14 (Sonoma) resolver contexts.  The page images are primary; these entries let the
-    // resolver recover the same sites on a nearby build when the exact pages do not match.
-    static const UInt8 kResolverHwCtx_Sonoma[] = {
-        0xAC, 0x00, 0x00, 0x00, 0x41, 0x83, 0xF8, 0x13, 0x77, 0x45, 0xC7, 0x07, 0x8D, 0x00, 0x00, 0x00,
-        0xC7, 0x47, 0x78, 0x04, 0x00, 0x00, 0x00, 0xC5, 0xF8, 0x28, 0x05, 0xF4, 0x19, 0x0E, 0x00, 0xC5,
-    };
-    static const UInt8 kResolverDualCtx_Sonoma[] = {
-        0x88, 0xA0, 0x00, 0x00, 0x00, 0xD1, 0xE9, 0x83, 0xE1, 0x01, 0x8B, 0x83, 0x98, 0x13, 0x00, 0x00,
-        0x83, 0xE0, 0xFE, 0x09, 0xC8, 0x89, 0x83, 0x98, 0x13, 0x00, 0x00, 0x48, 0x8B, 0x8B, 0x68, 0x0D,
-    };
-    static const UInt8 kResolverGateCtx_Sonoma[] = {
-        0xFF, 0xFF, 0x48, 0x8B, 0x85, 0x48, 0xFE, 0xFF, 0xFF, 0xF6, 0x80, 0xA0, 0x00, 0x00, 0x00, 0x02,
-        0x75, 0x0B, 0x31, 0xC0, 0x48, 0x8B, 0x9D, 0x78, 0xFE, 0xFF, 0xFF, 0xEB, 0x1D, 0x80, 0xBD, 0x80,
-    };
-    static const UInt8 kResolverAllowCtx_Sonoma[] = {
-        0x95, 0xC1, 0x48, 0x8B, 0x9D, 0x78, 0xFE, 0xFF, 0xFF, 0x4A, 0x0F, 0xBA, 0x64, 0x33, 0x08, 0x22,
-        0x0F, 0x93, 0xC0, 0x08, 0xC8, 0x4C, 0x8B, 0xB5, 0x70, 0xFE, 0xFF, 0xFF, 0x0F, 0xB6, 0xC0, 0x41,
-    };
-    static const UserPatches::SignaturePatch kResolverSignatures_Sonoma[] = {
-        {kResolverHwCtx_Sonoma, kResolverMask32, sizeof(kResolverHwCtx_Sonoma), 16, kGLDriverHwInfoReplace,
-         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000},
-        {kResolverDualCtx_Sonoma, kResolverMask32, sizeof(kResolverDualCtx_Sonoma), 16, kGLDriverDualQuadReplace,
-         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000},
-        {kResolverGateCtx_Sonoma, kResolverMask32, sizeof(kResolverGateCtx_Sonoma), 16, kMTLGateReplace,
-         sizeof(kMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
-        {kResolverAllowCtx_Sonoma, kResolverMask32, sizeof(kResolverAllowCtx_Sonoma), 16, kMTLAllowReplace_Sonoma,
-         sizeof(kMTLAllowReplace_Sonoma), 0, 1, ~static_cast<UInt64>(0)},
-    };
-    constexpr size_t kResolverSignatureCount_Sonoma = arrsize(kResolverSignatures_Sonoma);
 
     constexpr size_t kResolverSignatureCount = arrsize(kResolverSignatures);
 
@@ -1019,10 +990,11 @@ static const UInt8 kGLDriverDualQuadPage[] = {
         // macOS 26.7.1 (Darwin 25.6.0).  Exact page images make this a no-op on any other driver build.
         {"26.7.1 / gfx9 APU", PenguinWizardry::KernelVersion(25, 6), PenguinWizardry::KernelVersion(25, 6),
          UserPatches::kApuAll, kTahoeGLDriverPatches, kTahoeGLDriverPatchCount},
-        // macOS 14.x (Sonoma) fallback; exact pages gate the actual driver build.
-        {"14.x / Sonoma gfx9 APU", PenguinWizardry::KernelVersion(23, 0),
-         PenguinWizardry::KernelVersion(23, 99), UserPatches::kApuAll, kGLDriverPatches_Sonoma,
-         kGLDriverPatchCount_Sonoma, kResolverSignatures_Sonoma, kResolverSignatureCount_Sonoma},
+        // macOS 14.8.x (Sonoma, Darwin 23.6).  Exact pages are primary; other 14.x builds fall
+        // through to the semantic backend instead of a second resolver.
+        {"14.8.x / Sonoma gfx9 APU", PenguinWizardry::KernelVersion(23, 6),
+         PenguinWizardry::KernelVersion(23, 6), UserPatches::kApuAll, kGLDriverPatches_Sonoma,
+         kGLDriverPatchCount_Sonoma},
     };
     constexpr size_t kGLDriverPatchSetCount = sizeof(kGLDriverPatchSets) / sizeof(kGLDriverPatchSets[0]);
 
@@ -1140,10 +1112,11 @@ void UserPatches::selectPatchSet()
         this->patchCount     = set.count;
         this->signatures     = set.signatures;
         this->signatureCount = set.signatureCount;
-        // An exact patch set is the complete fix for this build.  Keeping the semantic scanner active
-        // would still walk every validated page and can add measurable overhead (visible as stutter on
-        // 26.7.1); it is only a fallback for builds without page data.
-        if (this->semanticEnabled || this->semanticMTLEnabled) {
+        // For the exact Sequoia/Tahoe sets, keeping the semantic scanner active would still walk every
+        // validated page and can add measurable overhead (visible as stutter on 26.7.1).  The Sonoma
+        // entry intentionally keeps semantic scanning: its exact pages are the primary path and the
+        // semantic backend remains the fallback for nearby 14.x builds.
+        if (set.minVersion.major() != 23 && (this->semanticEnabled || this->semanticMTLEnabled)) {
             this->semanticEnabled    = false;
             this->semanticMTLEnabled = false;
             SYSLOG("UserPatch", "Exact patch set matched; semantic scanning disabled");

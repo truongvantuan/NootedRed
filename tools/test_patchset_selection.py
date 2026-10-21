@@ -31,7 +31,7 @@ SETS = [
     PatchSet("15.8.1 / Raven-family", 24, 6, RAVEN | RAVEN2 | PICASSO),
     PatchSet("15.8.1 / gfx9 APU fallback", 24, 6, ALL),
     PatchSet("26.7.1 / gfx9 APU", 25, 6, ALL),
-    PatchSet("14.x / Sonoma gfx9 APU", 23, 0, ALL, 23, 99),
+    PatchSet("14.8.x / Sonoma gfx9 APU", 23, 6, ALL),
 ]
 
 
@@ -64,8 +64,9 @@ def main() -> None:
         (24, 7, RENOIR, None),
         (25, 6, RENOIR, "26.7.1 / gfx9 APU"),
         (25, 5, RENOIR, None),
-        (23, 6, RENOIR, "14.x / Sonoma gfx9 APU"),
-        (23, 0, RENOIR, "14.x / Sonoma gfx9 APU"),
+        (23, 6, RENOIR, "14.8.x / Sonoma gfx9 APU"),
+        (23, 5, RENOIR, None),
+        (23, 0, RENOIR, None),
         (22, 6, RENOIR, None),
     ]
     for major, minor, apus, expected in cases:
