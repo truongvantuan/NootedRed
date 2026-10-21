@@ -21,9 +21,9 @@ corresponding feature test on that exact build **and** APU.
 | **15.8.1 (24H32)** | 24.6.0 | supported | **validated** (`0x1638`) | **validated** (`0x1638`) | **validated** (`24H32` data) | **validated** (`VDAVAData`, `VDAGVAData`) | **validated** (`0x1638`) |
 | **14.8.9 (23J631)** | 23.6.0 | supported | experimental (exact Sonoma pages + semantic fallback, offline) | experimental (exact Sonoma pages + semantic fallback, offline) | experimental (imported `23J631` data, byte-gated) | experimental (imported `VDAVADataSonoma`, `VDAGVADataSonoma`) | experimental (imported data) |
 | **26.7.1 (25G241)** | 25.6.0 | supported | experimental (`TahoePatchData`, offline) | experimental (`TahoePatchData` gate/allow, offline) | experimental (`25G241` data, hardware pending) | experimental (`VDAVADataTahoe`, `VDAGVADataTahoe`, hardware pending) | experimental (26.7.1 data, hardware pending) |
-| other 15.x (`24H*`) | 24.x | supported | experimental/no-op (semantic) | experimental/no-op (semantic) | **unsupported** (exact `24H32` only) | **unsupported** | **unsupported** |
-| other 14.x (`23H*`/`23G*`) | 23.x | supported | experimental (semantic/exact) | experimental (semantic/exact) | experimental (`23H`/`23G` prefix reuse of `23J631`, byte-gated) | experimental (`VDAVADataSonoma`, exact pages) | experimental |
-| other 26.x | 25.x | supported | **no-op/unsupported** (exact `25G241` pages only) | **no-op/unsupported** (exact `25G241` pages only) | **unsupported** | **unsupported** | **unsupported** |
+| other 15.x (`24H*`) | 24.x | supported | experimental (semantic/exact) | experimental (semantic/exact) | experimental (`24H` family fallback, byte-gated) | **unsupported** (exact `24H32` pages) | **unsupported** |
+| other 14.x (`23H*`/`23G*`/`23J*`) | 23.x | supported | experimental (semantic/exact) | experimental (semantic/exact) | experimental (`23J`/`23H`/`23G` family fallback, byte-gated) | experimental (`VDAVADataSonoma`, exact pages) | experimental |
+| other 26.x | 25.x | supported | experimental/no-op (semantic/exact) | experimental/no-op (semantic/exact) | experimental (`25G` family fallback, byte-gated) | **unsupported** (exact `25G241` pages) | **unsupported** |
 | Catalina 10.15 – Ventura 13 | 19–22 | supported | unsupported/no-op | unsupported/no-op | **unsupported** | **unsupported** | **unsupported** |
 
 Notes:
@@ -36,8 +36,9 @@ Notes:
   ignored and the system stays on software decode.
 - macOS 26.7.1 GL/MTL images are from the `25G241` external datasets; this project has not booted
   them on hardware itself.
-- 14.7.x (`23H`/`23G`) reuses the 14.8.9 `23J631` VCN tables behind a build-prefix gate; the guard and
-  call-site bytes still decide whether it applies. Other 15.x builds remain exact-build only.
+- VCN family-prefix adapters reuse the nearest validated table (`23J631`, `24H32`, `25G241`) for nearby
+  patch releases.  Every guard/getter and original call-site byte is still checked; a changed kernel is
+  a no-op.  These adapters are not a substitute for a build-specific VDA page table.
 - Other 15.x/14.x builds can still use the semantic GL path (14.x also keeps semantic scanning when its
   exact Sonoma pages are selected).
 

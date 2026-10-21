@@ -126,7 +126,8 @@ def main() -> int:
         if token not in data_text:
             raise Failure(f"VCNData.hpp is missing {token!r}")
     for token in ("Build23J631::kData", "Build23H::kData", "Build23G::kData", "Build24H32::kData",
-                  "Build25G241::kData", "buildMatches", "buildPrefix", "osversion[i] == '\\0'"):
+                  "Build25G241::kData", "Build23J::kData", "Build24H::kData", "Build25G::kData",
+                  "buildMatches", "buildPrefix", "osversion[i] == '\\0'"):
         if token not in selector_text:
             raise Failure(f"VCNData.cpp is missing {token!r}")
     if 'major() == 23' in selector_text or '"23J"' in selector_text or '"24H"' in selector_text:

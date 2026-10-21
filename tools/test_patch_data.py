@@ -142,8 +142,8 @@ def main():
     check("kTahoeMTLAllowFind" in tahoe_table.group(1), "Tahoe table is missing the allow patch")
     check("kTahoeMTLDualQuadFind" not in tahoe_table.group(1),
           "Tahoe table must not use the experimental direct-field Metal form")
-    check("Exact patch set matched; semantic scanning disabled" in text,
-          "exact patch sets must disable redundant semantic scanning")
+    check("Exact GL/Metal page applied; semantic scanning disabled" in text,
+          "semantic scanning must stop only after an exact GL/Metal page is applied")
     check("kGLDriverPatches_Sonoma" in text, "missing Sonoma patch table")
 
     print(f"ok: {patches} page patch(es), {sets} patch set(s)")

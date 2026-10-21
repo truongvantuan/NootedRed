@@ -54,7 +54,7 @@ namespace VCNData
     struct Variant
     {
         // Stable numeric identifier for diagnostics (1 = 23J631, 2 = 24H32, 3 = 25G241,
-        // 4 = 23H prefix, 5 = 23G prefix).
+        // 4 = 23H prefix, 5 = 23G prefix, 6 = 23J prefix, 7 = 24H prefix, 8 = 25G prefix).
         UInt32 id;
         const char* build;
         UInt32      darwinMajor;

@@ -1064,15 +1064,6 @@ void UserPatches::selectPatchSet()
 
         this->patches    = set.patches;
         this->patchCount = set.count;
-        // For the exact Sequoia/Tahoe sets, keeping the semantic scanner active would still walk every
-        // validated page and can add measurable overhead (visible as stutter on 26.7.1).  The Sonoma
-        // entry intentionally keeps semantic scanning: its exact pages are the primary path and the
-        // semantic backend remains the fallback for nearby 14.x builds.
-        if (set.minVersion.major() != 23 && (this->semanticEnabled || this->semanticMTLEnabled)) {
-            this->semanticEnabled    = false;
-            this->semanticMTLEnabled = false;
-            SYSLOG("UserPatch", "Exact patch set matched; semantic scanning disabled");
-        }
         SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
                version.major(), version.minor(), apus);
         return;
@@ -1557,6 +1548,15 @@ void UserPatches::patchNativePage(const void* const data, void* const vnode, con
         }
 
         DBGLOG("UserPatch", "Patched %zu site(s) in a user-space driver page", page.siteCount);
+
+        // The exact page is the strongest match.  Only now is it safe to stop the semantic scanner:
+        // a PatchSet range can match a sub-build whose exact page does not, and that build must still
+        // get the semantic fallback.
+        if (!page.vda && (this->semanticEnabled || this->semanticMTLEnabled)) {
+            this->semanticEnabled    = false;
+            this->semanticMTLEnabled = false;
+            SYSLOG("UserPatch", "Exact GL/Metal page applied; semantic scanning disabled");
+        }
 
         if (page.vda) {
             const auto applied = static_cast<UInt32>(OSIncrementAtomic(&this->vdaAppliedCount) + 1);

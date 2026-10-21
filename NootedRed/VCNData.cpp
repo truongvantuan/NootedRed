@@ -25,16 +25,20 @@
 #include <VCNData/23J631.hpp>
 #include <VCNData/24H32.hpp>
 #include <VCNData/25G241.hpp>
+#include <VCNData/families.hpp>
 
 namespace
 {
 
     const VCNData::Variant* const kVariants[] = {
         &VCNData::Build23J631::kData,
+        &VCNData::Build23J::kData,
         &VCNData::Build23H::kData,
         &VCNData::Build23G::kData,
         &VCNData::Build24H32::kData,
+        &VCNData::Build24H::kData,
         &VCNData::Build25G241::kData,
+        &VCNData::Build25G::kData,
     };
 
     bool buildMatches(const char* const osversion, const char* const build, const bool prefix)
@@ -48,8 +52,8 @@ namespace
             if (osversion[i] != build[i]) { return false; }
         }
 
-        // Prefix variants are only used for explicitly declared 14.7.x families; everything else is an
-        // exact build token and rejects trailing characters.
+        // Prefix variants are only used for explicitly declared patch-release families; everything else
+        // is an exact build token and rejects trailing characters.
         return prefix || osversion[i] == '\0';
     }
 
