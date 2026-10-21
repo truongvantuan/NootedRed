@@ -1,4 +1,4 @@
-# Combined NootedRed 0.9.2
+# Combined NootedRed 0.9.4 (DP recovery candidate)
 
 This fork combines the `master` branches of
 [Weachy](https://github.com/weachy/NootedRed) and
@@ -14,6 +14,11 @@ The integration records both upstream histories as merge parents so future updat
 | Local baseline | `ded3289a81cff99d3e1123b621fd02561811708c` | Compiler compatibility and release CI |
 
 Only these two forks' `master` branches are integrated. Research branches and other forks are excluded.
+
+0.9.4 extends the opt-in local DisplayPort receiver pre-wake candidate with a guarded transmitter
+BIOS-loop deadline, currently limited to the inspected Renoir/23J631 framebuffer. The 0.9.3
+receiver-only power-button trials failed; the 0.9.4 hardware result is pending. See
+[DisplayPort recovery](DisplayPort-Recovery.md) for the evidence, constraints and diagnostics.
 
 xiaot-evo force-rewrote its earlier history; the old `11dac5c` integration and the rewritten upstream
 tip are both retained as ancestors. The update compares the old/new source snapshots to preserve local
@@ -51,6 +56,7 @@ Keep your existing unrelated boot arguments and append the desired feature flags
 | `-NRedGLFixResolveOnly` | GL QA mode: skip exact GL pages and semantic matching; VA/AppleGVA exact patches remain available |
 | `-NRedVDA` | Request experimental H.264 and HEVC video acceleration |
 | `-NRedAVC` | Request the video bridge but remove HEVC decode/encode capability properties; overrides `-NRedVDA` |
+| `-NRedDPFix` | Experimental direct-DP receiver pre-wake and guarded BIOS-loop deadline for the exact inspected Renoir/23J631 framebuffer; hardware verification pending |
 
 For your existing full video configuration:
 
@@ -91,10 +97,13 @@ python3 tools/test_patchset_selection.py
 python3 tools/test_gl_semantic_data.py
 python3 tools/test_patch_dispatch.py
 python3 tools/test_vcn_multibuild.py
+python3 tools/test_dp_recovery.py
+python3 tools/test_atom_loop_guard.py
+python3 tools/test_atom_native_vm.py
 ```
 
 Artifacts are under `build/branches/<sanitized-branch>/macosx/x86_64/release/`.
-The kext and ZIP report version 0.9.2. New ZIPs include a local timestamp; older canonical archives are
+The kext and ZIP report version 0.9.4. New ZIPs include a local timestamp; older canonical archives are
 preserved. See [Build-Artifacts.md](Build-Artifacts.md).
 
 Host checks validate reference bytes, selection ranges, native-page dispatch with kernel calls stubbed,

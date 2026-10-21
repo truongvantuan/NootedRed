@@ -23,6 +23,8 @@
 #include "AmdAtomPspDirectoryDummy.hpp"
 #include "AmdAtomVramInfoIGP.hpp"
 #include <ASICCaps.hpp>
+#include <AtomLoopGuard.hpp>
+#include <DPRecovery.hpp>
 #include <GPUDriversAMD/ATOMBIOS.hpp>
 #include <GPUDriversAMD/CAIL/ASICCaps.hpp>
 #include <GPUDriversAMD/FB/AmdAsicInfo.hpp>
@@ -47,6 +49,8 @@
 #include <mach/i386/vm_param.h>
 #include <mach/i386/vm_types.h>
 #include <mach/kern_return.h>
+#include <kern/clock.h>
+#include <kern/thread.h>
 
 static const UInt8 kCailAsicCapsTablePattern[] = {0x6E, 0x00, 0x00, 0x00, 0x98, 0x67, 0x00, 0x00,
                                                   0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
@@ -199,6 +203,15 @@ static const UInt8 kValidateDetailedTimingOriginal[] = {0x66, 0x0F, 0x2E, 0xC1, 
 static const UInt8 kValidateDetailedTimingPatched[]  = {0x66, 0x0F, 0x2E, 0xC1, 0x66, 0x90, 0xF2, 0x0F, 0x5E, 0xC1};
 
 static X6000FB moduleInstance;
+static DPRecovery::AtomThreadSlots<16> dpBiosThreads;
+static bool dpBiosGuardReady = false;
+static UInt32 dpBiosScopes = 0;
+static UInt32 dpPhyEntered = 0;
+static UInt32 dpPhyCompleted = 0;
+static UInt32 dpBiosTimeouts = 0;
+static UInt32 dpBiosEntered = 0;
+static UInt32 dpBiosCompleted = 0;
+extern "C" char osversion[];
 
 X6000FB& X6000FB::singleton() { return moduleInstance; }
 
@@ -207,6 +220,8 @@ void X6000FB::processKext(KernelPatcher& patcher, size_t id, mach_vm_address_t s
     if (kextRadeonX6000Framebuffer.loadIndex != id) { return; }
 
     NRed::singleton().hwLateInit();
+
+    if (checkKernelArgument("-NRedDPFix")) { installDpRecovery(patcher, id, slide, size); }
 
     CAILAsicCapsEntry*                   orgAsicCapsTable       = nullptr;
     void*                                orgAmdAsicInfoNavi10VT = nullptr;
@@ -611,6 +626,184 @@ void X6000FB::wrapDpReceiverPowerCtrl(void* const link, const bool powerOn)
     IOSleep(250);
 }
 
+void X6000FB::installDpRecovery(KernelPatcher& patcher, const size_t id,
+                               const mach_vm_address_t slide, const size_t size)
+{
+    auto& nred = NRed::singleton();
+    nred.setProp32("NRedDPRecoveryRequested", 1);
+    nred.setProp32("NRedDPRecoveryReady", 0);
+    nred.setProp32("NRedDPBiosGuardReady", 0);
+    nred.setProp32("NRedDPBiosGuardState", 0);
+    nred.setProp32("NRedDPBiosTimeouts", 0);
+    nred.setProp32("NRedDPRecoveryEntered", 0);
+    nred.setProp32("NRedDPRecoveryCompleted", 0);
+    nred.setProp32("NRedDPBiosGuardEntered", 0);
+    nred.setProp32("NRedDPBiosGuardCompleted", 0);
+    if (!nred.getAttributes().isRenoir() || strcmp(osversion, "23J631") ||
+        !DPRecovery::matchesFramebuffer(reinterpret_cast<const UInt8*>(slide), size)) {
+        SYSLOG("DPFix", "unsupported hardware/build/framebuffer identity; recovery not installed");
+        return;
+    }
+    // Verify every additional entry before routing changes the image. Partially
+    // installed wrappers remain pass-through unless the complete set succeeds.
+    if (DPRecovery::matchesAtomEntryPoints(reinterpret_cast<const UInt8*>(slide), size)) {
+        KernelPatcher::RouteRequest guards[] = {
+            {nullptr, wrapAtomExecute, orgAtomExecute},
+            {nullptr, wrapAtomJump, orgAtomJump},
+            {nullptr, wrapAtomJumpBelowEqual, orgAtomJumpBelowEqual},
+            {nullptr, wrapAtomJumpNotEqual, orgAtomJumpNotEqual},
+            {nullptr, wrapReadValidateReg32, orgReadValidateReg32},
+        };
+        for (size_t i = 0; i < arrsize(guards); ++i) {
+            guards[i].from = slide + DPRecovery::kAtomEntryGuards[i].offset;
+        }
+        dpBiosGuardReady = patcher.routeMultiple(id, guards, arrsize(guards), slide, size);
+        if (!dpBiosGuardReady) { patcher.clearError(); }
+    }
+    nred.setProp32("NRedDPBiosGuardReady", dpBiosGuardReady ? 1 : 0);
+    if (!dpBiosGuardReady) { SYSLOG("DPFix", "ATOM guard unavailable; native BIOS execution unchanged"); }
+    readDpcd = reinterpret_cast<readDpcd_t*>(slide + DPRecovery::kReadDpcdOffset);
+    writeDpcd = reinterpret_cast<writeDpcd_t*>(slide + DPRecovery::kWriteDpcdOffset);
+    KernelPatcher::RouteRequest route{nullptr, wrapDpEnableLinkPhy, orgDpEnableLinkPhy};
+    route.from = slide + DPRecovery::kEnablePhyOffset;
+    if (!patcher.routeMultiple(id, &route, 1, slide, size)) {
+        patcher.clearError();
+        SYSLOG("DPFix", "failed to route DP PHY enable; recovery not installed");
+        return;
+    }
+    nred.setProp32("NRedDPRecoveryReady", 1);
+    SYSLOG("DPFix", "receiver pre-wake enabled for Sonoma 23J631 Renoir (revision 2), BIOS guard=%u",
+           dpBiosGuardReady ? 1 : 0);
+}
+
+void X6000FB::wrapDpEnableLinkPhy(void* const link, const UInt32 signal,
+                                const UInt32 clockSource, const void* const settings)
+{
+    auto& self = singleton();
+    const bool directDp = link && signal == DPRecovery::kDisplayPort;
+    // Direct DP only. Preserve HDMI, eDP, MST and the original PHY call/arguments.
+    if (directDp) {
+        NRed::singleton().setProp32("NRedDPRecoveryEntered", __atomic_add_fetch(&dpPhyEntered, 1U, __ATOMIC_RELAXED));
+        const auto result = DPRecovery::wakeReceiver(
+            [&](UInt32 address, UInt8* data, UInt32 count) {
+                return self.readDpcd(link, address, data, count);
+            },
+            [&](UInt32 address, const UInt8* data, UInt32 count) {
+                return self.writeDpcd(link, address, data, count);
+            },
+            [](UInt32 ms) { IOSleep(ms); });
+        NRed::singleton().setProp32("NRedDPRecoveryState", static_cast<UInt32>(result.state));
+        NRed::singleton().setProp32("NRedDPRecoveryPowerBefore", result.before);
+        NRed::singleton().setProp32("NRedDPRecoveryPowerAfter", result.after);
+        SYSLOG("DPFix", "before PHY enable: state=%u power=%02X->%02X attempts=%u",
+               static_cast<UInt32>(result.state), result.before, result.after, result.attempts);
+    }
+    auto* slot = directDp && dpBiosGuardReady ?
+        dpBiosThreads.acquire(reinterpret_cast<uintptr_t>(current_thread())) : nullptr;
+    if (slot) { __atomic_add_fetch(&dpBiosScopes, 1U, __ATOMIC_RELEASE); }
+    FunctionCast(wrapDpEnableLinkPhy, self.orgDpEnableLinkPhy)(link, signal, clockSource, settings);
+    if (slot) {
+        dpBiosThreads.release(slot);
+        __atomic_sub_fetch(&dpBiosScopes, 1U, __ATOMIC_RELEASE);
+    }
+    if (directDp) {
+        NRed::singleton().setProp32("NRedDPRecoveryCompleted", __atomic_add_fetch(&dpPhyCompleted, 1U, __ATOMIC_RELAXED));
+    }
+}
+
+bool X6000FB::wrapAtomExecute(void* const self, const UInt32 table, void* const parameters,
+                            const UInt32 options)
+{
+    auto* slot = __atomic_load_n(&dpBiosScopes, __ATOMIC_ACQUIRE) ?
+        dpBiosThreads.find(reinterpret_cast<uintptr_t>(current_thread())) : nullptr;
+    // The observed operation is DIG1TransmitterControl, action 1 (enable),
+    // inside a direct-DP PHY call. Other BIOS commands and callers are untouched.
+    if (!slot) {
+        return FunctionCast(wrapAtomExecute, singleton().orgAtomExecute)(self, table, parameters, options);
+    }
+    auto* previous = slot->execution;
+    if (table != 0x4C || !parameters || static_cast<UInt8*>(parameters)[1] != 1) {
+        // An externally re-entered unrelated BIOS command must not inherit the
+        // parent's abort state. ATOM's internal CallTable uses the same VM and
+        // remains covered by its parent's deadline.
+        slot->execution = nullptr;
+        const bool result = FunctionCast(wrapAtomExecute, singleton().orgAtomExecute)(self, table, parameters, options);
+        slot->execution = previous;
+        return result;
+    }
+    UInt64 deadline = 0;
+    clock_interval_to_deadline(20, 1000000000, &deadline);
+    DPRecovery::AtomExecution execution{deadline};
+    slot->execution = &execution;
+    auto& nred = NRed::singleton();
+    nred.setProp32("NRedDPBiosGuardEntered", __atomic_add_fetch(&dpBiosEntered, 1U, __ATOMIC_RELAXED));
+    const bool result = FunctionCast(wrapAtomExecute, singleton().orgAtomExecute)(self, table, parameters, options);
+    slot->execution = previous;
+    nred.setProp32("NRedDPBiosGuardCompleted", __atomic_add_fetch(&dpBiosCompleted, 1U, __ATOMIC_RELAXED));
+    if (execution.aborted || execution.unwindRefused) {
+        nred.setProp32("NRedDPBiosGuardState", execution.aborted ? 1 : 2);
+        nred.setProp32("NRedDPBiosPollRegister", execution.lastRegister);
+        nred.setProp32("NRedDPBiosPollValue", execution.lastValue);
+        nred.setProp32("NRedDPBiosTableOffset", execution.tableOffset);
+        nred.setProp32("NRedDPBiosInstructionOffset", execution.instructionOffset);
+        nred.setProp32("NRedDPBiosCompareSource", execution.compareSource);
+        nred.setProp32("NRedDPBiosCompareDestination", execution.compareDestination);
+        if (execution.aborted) {
+            nred.setProp32("NRedDPBiosTimeouts", __atomic_add_fetch(&dpBiosTimeouts, 1U, __ATOMIC_RELAXED));
+            SYSLOG("DPFix", "BIOS transmitter enable timed out: reg=%X value=%X table=%X ip=%X; returning failure",
+                   execution.lastRegister, execution.lastValue, execution.tableOffset, execution.instructionOffset);
+        }
+    }
+    // The native interpreter has performed its ordinary EOT frame cleanup.
+    // Override its EOT success only after an abort; never pretend enable worked.
+    return !execution.aborted && result;
+}
+
+bool X6000FB::checkAtomBranch(void* const context)
+{
+    if (!__atomic_load_n(&dpBiosScopes, __ATOMIC_ACQUIRE)) { return false; }
+    auto* slot = dpBiosThreads.find(reinterpret_cast<uintptr_t>(current_thread()));
+    if (!slot || !slot->execution) { return false; }
+    auto& execution = *slot->execution;
+    const bool previouslyRefused = execution.unwindRefused;
+    const bool aborted = execution.checkBranch(context, mach_absolute_time());
+    if (execution.unwindRefused && !previouslyRefused) {
+        NRed::singleton().setProp32("NRedDPBiosGuardState", 2);
+        NRed::singleton().setProp32("NRedDPBiosPollRegister", execution.lastRegister);
+        NRed::singleton().setProp32("NRedDPBiosPollValue", execution.lastValue);
+        SYSLOG("DPFix", "BIOS frame validation refused unwind; native execution retained");
+    }
+    return aborted;
+}
+
+void X6000FB::wrapAtomJump(void* const context)
+{
+    if (!checkAtomBranch(context)) { FunctionCast(wrapAtomJump, singleton().orgAtomJump)(context); }
+}
+
+void X6000FB::wrapAtomJumpBelowEqual(void* const context)
+{
+    if (!checkAtomBranch(context)) { FunctionCast(wrapAtomJumpBelowEqual, singleton().orgAtomJumpBelowEqual)(context); }
+}
+
+void X6000FB::wrapAtomJumpNotEqual(void* const context)
+{
+    if (!checkAtomBranch(context)) { FunctionCast(wrapAtomJumpNotEqual, singleton().orgAtomJumpNotEqual)(context); }
+}
+
+UInt32 X6000FB::wrapReadValidateReg32(void* const self, const UInt32 index)
+{
+    const auto value = FunctionCast(wrapReadValidateReg32, singleton().orgReadValidateReg32)(self, index);
+    if (__atomic_load_n(&dpBiosScopes, __ATOMIC_ACQUIRE)) {
+        auto* slot = dpBiosThreads.find(reinterpret_cast<uintptr_t>(current_thread()));
+        if (slot && slot->execution) {
+            slot->execution->lastRegister = index;
+            slot->execution->lastValue = value;
+        }
+    }
+    return value;
+}
+
 void* X6000FB::wrapCreateObjectInfo(void* const helper, const UInt32 tableOffset)
 {
     const auto ret = FunctionCast(wrapCreateObjectInfo, singleton().orgCreateObjectInfo)(helper, tableOffset);
@@ -772,6 +965,9 @@ IOReturn X6000FB::readAtomBios(void* const self)
         }
     }
     getMember<size_t>(self, 0x10048) = size;
+    if (dpBiosGuardReady && size && size <= sizeof(biosImage)) {
+        NRed::singleton().setPropData("NRedDPBiosImage", biosImage, static_cast<UInt32>(size));
+    }
     return kIOReturnSuccess;
 }
 

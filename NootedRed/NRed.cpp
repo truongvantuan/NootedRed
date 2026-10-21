@@ -53,6 +53,7 @@
 #include <X6000FB.hpp>
 #include <kern/clock.h>
 #include <libkern/OSTypes.h>
+#include <libkern/c++/OSData.h>
 #include <libkern/c++/OSMetaClass.h>
 #include <mach/i386/vm_types.h>
 
@@ -279,6 +280,15 @@ void NRed::setProp32(const char* const key, const UInt32 value) const
     if (this->iGPU == nullptr) { return; }
 
     this->iGPU->setProperty(key, value, 32);
+}
+
+void NRed::setPropData(const char* const key, const void* const bytes, const UInt32 size) const
+{
+    if (!this->iGPU || !bytes || !size) { return; }
+    if (auto* data = OSData::withBytes(bytes, size)) {
+        this->iGPU->setProperty(key, data);
+        data->release();
+    }
 }
 
 UInt32 NRed::readReg32(const UInt32 reg) const

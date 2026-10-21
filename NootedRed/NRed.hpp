@@ -80,5 +80,6 @@ public:
     void processPatcher(KernelPatcher& patcher);    // TODO: Remove!
 
     void   setProp32(const char* key, UInt32 value) const;    // TODO: Remove!
+    void   setPropData(const char* key, const void* bytes, UInt32 size) const;
     UInt32 readReg32(UInt32 reg) const;                       // TODO: Remove!
 };
