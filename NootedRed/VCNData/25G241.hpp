@@ -244,6 +244,7 @@ namespace VCNData::Build25G241
         Table5000,
         Table6000,
         SignalSymbol,
+        false,
         true,
         KernelCollectionUUID,
         DriverUUID5000,

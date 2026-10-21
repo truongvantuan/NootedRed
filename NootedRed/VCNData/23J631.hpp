@@ -245,6 +245,7 @@ namespace VCNData::Build23J631
         Table6000,
         SignalSymbol,
         false,
+        false,
         KernelCollectionUUID,
         DriverUUID5000,
         DriverUUID6000,
