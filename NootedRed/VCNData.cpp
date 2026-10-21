@@ -21,6 +21,7 @@
 // along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowledge/raw/branch/master/LICENSE-v1.md.
 
 #include <VCNData.hpp>
+#include <VCNData/14_7.hpp>
 #include <VCNData/23J631.hpp>
 #include <VCNData/24H32.hpp>
 #include <VCNData/25G241.hpp>
@@ -30,11 +31,13 @@ namespace
 
     const VCNData::Variant* const kVariants[] = {
         &VCNData::Build23J631::kData,
+        &VCNData::Build23H::kData,
+        &VCNData::Build23G::kData,
         &VCNData::Build24H32::kData,
         &VCNData::Build25G241::kData,
     };
 
-    bool buildMatches(const char* const osversion, const char* const build)
+    bool buildMatches(const char* const osversion, const char* const build, const bool prefix)
     {
         if (osversion == nullptr || osversion[0] == '\0' || build == nullptr || build[0] == '\0') {
             return false;
@@ -45,8 +48,9 @@ namespace
             if (osversion[i] != build[i]) { return false; }
         }
 
-        // Exact build token, not a family prefix.  Reject trailing characters.
-        return osversion[i] == '\0';
+        // Prefix variants are only used for explicitly declared 14.7.x families; everything else is an
+        // exact build token and rejects trailing characters.
+        return prefix || osversion[i] == '\0';
     }
 
 }    // namespace
@@ -58,7 +62,7 @@ namespace VCNData
     {
         for (const auto* const variant : kVariants) {
             if (variant->darwinMajor == darwinMajor && variant->darwinMinor == darwinMinor
-                && buildMatches(osversion, variant->build))
+                && buildMatches(osversion, variant->build, variant->buildPrefix))
             {
                 return variant;
             }

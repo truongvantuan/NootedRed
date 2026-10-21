@@ -53,7 +53,8 @@ namespace VCNData
 
     struct Variant
     {
-        // Stable numeric identifier for diagnostics (1 = Sonoma 23J631, 2 = Sequoia 24H32).
+        // Stable numeric identifier for diagnostics (1 = 23J631, 2 = 24H32, 3 = 25G241,
+        // 4 = 23H prefix, 5 = 23G prefix).
         UInt32 id;
         const char* build;
         UInt32      darwinMajor;
@@ -71,6 +72,11 @@ namespace VCNData
         const char* table5000;
         const char* table6000;
         const char* signalSymbol;
+
+        // Exact build strings are the default.  Prefix variants reuse an existing byte table for a
+        // nearby patch release (e.g. 14.7.x "23H"/"23G" reusing the 14.8.9 tables) and still verify every
+        // guard and call-site byte before writing.
+        bool buildPrefix;
 
         // Identity is only available when the data was generated from a locally verified kernel
         // collection.  Imported or reconstructed data deliberately carries empty strings.
