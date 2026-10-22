@@ -57,8 +57,8 @@ PROFILES = {
         "macos_version": "15.8.1 (24H32)",
         "driver_version": "7.0.25",
         "cache_uuid": "42EC2890-BC40-317E-BB27-45142BFF7F26",
-        "namespace_suffix": "",
-        "output_name": "VDAVAData.hpp",
+        "namespace_suffix": "Sequoia",
+        "output_name": "VDAVADataSequoia.hpp",
         "evidence_doc": "analysis/vda-1581-va-data.md",
     },
     ("26.7.1", "25G241"): {

@@ -58,26 +58,28 @@ def check_compiled_selector() -> None:
 #include <cassert>
 #include <cstring>
 int main() {
-    for (unsigned major : {23U, 24U}) {
-        const char* build = major == 23 ? "23J631" : "24H32";
-        const auto* v = VCNData::findVariant(build, major, 6);
-        assert(v && v->id == (major == 23 ? 1U : 2U));
-        assert(v->callPatchCount == 20 && v->guard5000Count && v->guard6000Count);
-        assert(v == VCNData::variantForDarwin(major, 6));
-        assert(VCNData::hasVariantForDarwin(major, 6));
-        assert(!VCNData::findVariant(nullptr, major, 6));
-        assert(!VCNData::findVariant("", major, 6));
-        assert(!VCNData::findVariant(build, major, 5));
-        assert(!VCNData::findVariant(build, major, 7));
-        assert(!VCNData::findVariant(build, major == 23 ? 24 : 23, 6));
-        assert(!VCNData::findVariant(major == 23 ? "23J" : "24H", major, 6));
-        assert(!VCNData::findVariant(major == 23 ? "23J631extra" : "24H32extra", major, 6));
-        assert(!VCNData::findVariant(major == 23 ? "23J632" : "24H33", major, 6));
-        assert(!VCNData::variantForDarwin(major, 7));
-        assert(!VCNData::hasVariantForDarwin(major, 5));
+    struct Case { const char* build; unsigned major, id; bool prefix; };
+    for (const auto c : {
+        Case{"23J631", 23, 1, false}, Case{"24H32", 24, 2, false}, Case{"25G241", 25, 3, false},
+        Case{"23H123", 23, 4, true}, Case{"23G123", 23, 5, true}, Case{"23J632", 23, 6, true},
+        Case{"24H33", 24, 7, true}, Case{"25G242", 25, 8, true}, Case{"24G100", 24, 9, true}}) {
+        const auto* v = VCNData::findVariant(c.build, c.major, 6);
+        assert(v && v->id == c.id && v->buildPrefix == c.prefix);
+        assert(v->callPatchCount == 20 && v->guard5000Count == 6 && v->guard6000Count == 6);
+        if (c.prefix) assert(!v->hasKernelIdentity && !*v->kernelCollectionUUID);
+        assert(VCNData::variantForDarwin(c.major, 6));
+        assert(VCNData::hasVariantForDarwin(c.major, 6));
+        assert(!VCNData::findVariant(nullptr, c.major, 6));
+        assert(!VCNData::findVariant("", c.major, 6));
+        assert(!VCNData::findVariant(c.build, c.major, 5));
+        assert(!VCNData::findVariant(c.build, c.major, 7));
+        assert(!VCNData::findVariant(c.build, c.major == 23 ? 24 : 23, 6));
     }
-    assert(!VCNData::findVariant("25G241", 25, 6));
-    assert(!VCNData::variantForDarwin(25, 6));
+    assert(!VCNData::findVariant("24F100", 24, 6));
+    assert(!VCNData::findVariant("23K100", 23, 6));
+    assert(!VCNData::findVariant("25H100", 25, 6));
+    assert(!VCNData::findVariant("24", 24, 6));
+    assert(!VCNData::variantForDarwin(26, 6));
 }
 '''
     with tempfile.TemporaryDirectory(prefix="nred-vcn-") as directory:
@@ -91,7 +93,7 @@ int main() {
         subprocess.run(compiler + ["-std=c++17", "-I" + str(path), "-I" + str(ROOT / "NootedRed"),
                                   str(VCN_SELECTOR), str(source), "-o", str(path / "test")], check=True)
         subprocess.run([str(path / "test")], check=True)
-    print("production VCN selector: exact builds accepted; empty, prefix, suffix, wrong-build/Darwin rejected")
+    print("production VCN selector: exact builds take priority; declared families accepted; unrelated builds/Darwin rejected")
 
 
 def arrays(text: str) -> dict[str, bytes]:
@@ -160,30 +162,29 @@ def parse_page_patches(text: str, label: str) -> tuple[int, int, set[str]]:
 
 
 def main() -> int:
-    sequoia_text = KERNEL_DATA_24H32.read_text()
-    sonoma_text = KERNEL_DATA_23J631.read_text()
-    sequoia = parse_call_patches(sequoia_text, "24H32 CallPatches")
-    sonoma = parse_call_patches(sonoma_text, "23J631 CallPatches")
-    if len(sequoia) != 20 or len(sonoma) != 20:
-        raise Failure("both VCN call-site tables must contain 20 sites")
-    if sonoma == sequoia:
-        raise Failure("Sonoma and Sequoia call-site tables are identical; expected build-specific data")
-    if 'Build[] = "24H32"' not in sequoia_text or 'Build[] = "23J631"' not in sonoma_text:
-        raise Failure("per-build headers do not declare their exact build strings")
-    if 'static_assert(kCallPatchCount <= kMaxCallPatches' not in sequoia_text:
-        raise Failure("24H32 call-site table has no compile-time bound check")
-    if 'static_assert(kCallPatchCount <= kMaxCallPatches' not in sonoma_text:
-        raise Failure("23J631 call-site table has no compile-time bound check")
-    if 'DriverSHA256_6000' not in sequoia_text or 'No locally generated identity' not in sonoma_text:
-        raise Failure("per-build headers do not declare identity availability")
-    print(f"kernel tables: 24H32 {len(sequoia)} sites, 23J631 {len(sonoma)} sites")
+    tables = [("24H32", KERNEL_DATA_24H32), ("23J631", KERNEL_DATA_23J631),
+              ("25G241", ROOT / "NootedRed/VCNData/25G241.hpp")]
+    parsed = []
+    for build, path in tables:
+        text = path.read_text()
+        patches = parse_call_patches(text, build + " CallPatches")
+        if len(patches) != 20 or f'Build[] = "{build}"' not in text:
+            raise Failure(f"{build}: expected 20 call sites and exact build identifier")
+        if 'static_assert(kCallPatchCount <= kMaxCallPatches' not in text:
+            raise Failure(f"{build}: missing compile-time bound")
+        parsed.append(patches)
+        print(f"kernel table {build}: {len(patches)} sites")
+    if parsed[0] == parsed[1] or parsed[0] == parsed[2]:
+        raise Failure("expected OS-specific call sites")
 
     data_text = VCN_DATA.read_text()
     selector_text = VCN_SELECTOR.read_text()
     for token in ("findVariant", "variantForDarwin", "hasVariantForDarwin", "kMaxCallPatches"):
         if token not in data_text:
             raise Failure(f"VCNData.hpp is missing {token!r}")
-    for token in ("Build23J631::kData", "Build24H32::kData", "buildMatches", "osversion[i] == '\\0'"):
+    for token in ("Build23J631::kData", "Build24H32::kData", "Build25G241::kData",
+                  "Build23H::kData", "Build23G::kData", "Build23J::kData", "Build24H::kData",
+                  "Build24G::kData", "Build25G::kData", "buildPrefix", "buildMatches", "osversion[i] == '\\0'"):
         if token not in selector_text:
             raise Failure(f"VCNData.cpp is missing {token!r}")
     if 'major() == 23' in selector_text or '"23J"' in selector_text or '"24H"' in selector_text:
@@ -203,6 +204,10 @@ def main() -> int:
         "Sequoia GVA": (ROOT / "NootedRed" / "VDAGVAData.hpp", "15.8.1", 1, 1),
         "Sonoma GVA": (ROOT / "NootedRed" / "VDAGVADataSonoma.hpp", "14.8.9", 1, 1),
     }
+    page_cases.update({
+        "Tahoe VA": (ROOT / "NootedRed/VDAVADataTahoe.hpp", "26.7.1", 10, 12),
+        "Tahoe GVA": (ROOT / "NootedRed/VDAGVADataTahoe.hpp", "26.7.1", 1, 1),
+    })
     for label, (path, build, expected_records, expected_sites) in page_cases.items():
         text = header_text(path)
         if build not in text:

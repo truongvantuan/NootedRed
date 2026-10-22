@@ -1,13 +1,13 @@
 # NootedRed compatibility matrix
 
-Status date: 2026-10-20. This table describes what the current tree actually enables, not what the
+Status date: 2026-10-22. This table describes what the current tree actually enables, not what the
 hardware could theoretically do. A feature is only `validated` when it has passed a real boot and the
 corresponding feature test on that exact build **and** APU.
 
-The historical `validated` entries below are upstream-reported results, not hardware validation of this
-combined 0.9.2 build. Local 0.9.1 Renoir `0x1636` / Sonoma `23J631` tests found a compute hang even with
-GLFix and VDA disabled; short decode probes had passed on 0.9.0, while encoding produced incorrect
-pixels. Version 0.9.2 is host/build-tested only until a new hardware test is recorded.
+The historical `validated` entries below are upstream-reported results, not hardware validation of
+this combined 0.9.3 build. Local 0.9.1 Renoir `0x1636` / Sonoma `23J631` tests found a compute hang even
+with GLFix and VDA disabled; short decode probes passed on 0.9.0, while encoding produced incorrect
+pixels. This integration has host checks only; a macOS build and hardware validation are pending.
 
 ## Status vocabulary
 
@@ -24,36 +24,48 @@ pixels. Version 0.9.2 is host/build-tested only until a new hardware test is rec
 | macOS build | Darwin | Kernel / graphics | GLFIX GL | GLFIX Metal | VDA/VCN kernel bridge | VDA user-space (VA + AppleGVA) | HEVC encode |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | **15.8.1 (24H32)** | 24.6.0 | supported | **validated** (`0x1638`) | **validated** (`0x1638`) | **validated** (`24H32` data) | **validated** (`VDAVAData`, `VDAGVAData`) | **validated** (`0x1638`) |
-| **14.8.9 (23J631)** | 23.6.0 | supported | experimental (exact pages/resolver) | experimental (exact pages/resolver) | experimental (imported `23J631` data, byte-gated) | experimental (imported `VDAVADataSonoma`, `VDAGVADataSonoma`) | experimental (imported data) |
-| **26.7.1 (25G241)** | 25.6.0 | supported | experimental (exact pages, offline) | experimental (gate/allow exact pages, runtime pending) | **unsupported** (no `25G241` kernel data) | **unsupported** (no macOS 26 VA/AppleGVA data) | **unsupported** |
-| other 15.x (`24H*`) | 24.x | supported | experimental/no-op (semantic) | experimental/no-op (semantic) | **unsupported** (exact `24H32` only) | **unsupported** | **unsupported** |
-| other 14.x | 23.x | supported | experimental/no-op (exact pages/resolver; semantic QA override) | experimental/no-op (exact pages/resolver; semantic QA override) | **unsupported** (exact `23J631` only) | **unsupported** | **unsupported** |
-| other 26.x | 25.x | supported | **no-op/unsupported** (exact `25G241` pages only) | **no-op/unsupported** (exact `25G241` pages only) | **unsupported** | **unsupported** | **unsupported** |
+| **14.8.9 (23J631)** | 23.6.0 | supported | experimental (exact pages + semantic/signature fallback, offline) | experimental (exact pages + semantic/signature fallback, offline) | experimental (imported `23J631` data, byte-gated) | experimental (imported `VDAVADataSonoma`, `VDAGVADataSonoma`) | experimental (imported data) |
+| **26.7.1 (25G241)** | 25.6.0 | supported | experimental (`TahoePatchData`, offline) | experimental (`TahoePatchData` gate/allow, offline) | experimental (`25G241` data, hardware pending) | experimental (`VDAVADataTahoe`, `VDAGVADataTahoe`, hardware pending) | experimental (26.7.1 data, hardware pending) |
+| other 15.x (`24G*`/`24H*`) | 24.x | supported | experimental (semantic/exact) | experimental (semantic/exact) | experimental (`24G`/`24H` family fallback, byte-gated) | experimental/no-op (reference pages/site contexts) | experimental |
+| other 14.x (`23H*`/`23G*`/`23J*`) | 23.x | supported | experimental (semantic/exact) | experimental (semantic/exact) | experimental (`23J`/`23H`/`23G` family fallback, byte-gated) | experimental (`VDAVADataSonoma`, exact pages) | experimental |
+| other 26.x | 25.x | supported | experimental/no-op (semantic/exact) | experimental/no-op (semantic/exact) | experimental (`25G` family fallback, byte-gated) | experimental/no-op (reference pages/site contexts) | experimental |
 | Catalina 10.15 – Ventura 13 | 19–22 | supported | unsupported/no-op | unsupported/no-op | **unsupported** | **unsupported** | **unsupported** |
 
 Notes:
 
 - "Kernel / graphics" means the NootedRed kext itself loads and the existing X5000/HWLibs/display
   patches run. It does not imply GLFIX or VDA.
-- GLFIX is off by default; `-NRedGLFix` opts in and `-NRedGLFixOff` overrides it. A version/APU-matched
-  patch set disables semantic scanning by default; `-NRedGLFixSemanticMTL` explicitly restores it.
-  Without a matched set, semantic fallback is a no-op when its instruction contexts do not match.
-- VDA/VCN is opt-in (`-NRedVDA`, or `-NRedAVC` for AVC-only). Without matching data the boot argument is
+- GLFIX is opt-in with `-NRedGLFix` (`-NRedGLFixOff` forces it off). The semantic fallback is a no-op
+  when its instruction contexts do not match.
+- VDA/VCN is opt-in (`-NRedVDA`, `-NRedAVC` for AVC-only, or `-NRedAVCEncode` to retain HEVC encoding). Without matching data the boot argument is
   ignored and the system stays on software decode.
 - macOS 26.7.1 GL/MTL images are from the `25G241` external datasets; this project has not booted
   them on hardware itself.
-- Other builds can use semantic scanning when no version/APU patch set matches, or when explicitly
-  forced with `-NRedGLFixSemanticMTL`. Sonoma has a broad Darwin 23.x table, so its semantic path needs
-  that override. VCN/VDA remains unavailable outside its two exact builds.
+- VCN family-prefix adapters reuse the nearest validated table (`23J631`, `24H32`, `25G241`) for nearby
+  patch releases.  Every guard/getter and original call-site byte is still checked; a changed kernel is
+  a no-op.  These adapters are not a substitute for a build-specific VDA page table.
+- Other 15.x/14.x builds can still use the semantic GL path (14.x also keeps semantic scanning when its
+  exact Sonoma pages are selected).
+
+- This fork preserves Weachy's signature resolver as the final rendering fallback, enabled with GLFIX.
+  A version/APU match keeps semantic GL/Metal scanning available; an applied exact rendering page stops
+  it unless `-NRedGLFixSemanticMTL` explicitly forces it. `-NRedGLFixSemanticOff` wins.
+- Native site fallback requires every original patch site and 16 bytes of surrounding code on each
+  side to match. VDA still requires a ready bridge. Changed contexts remain unpatched.
+- Metal SubmitGuard is enabled by default on Darwin 23/24/25, independently of GLFIX/VDA. It verifies
+  the known method prologue at the OS-specific address; this does not guarantee all builds match.
+  `-NRedNoSubmitGuard` disables it. Its stability benefit needs a new hardware test.
+- Non-AMD discrete GPUs no longer block VDA. External AMD GPUs still block it unless
+  `-NRedForceVDA` overrides that check. `-NRedVCNNoGfxOff` is an optional diagnostic hold.
 
 ## APU matrix
 
 | APU / device ID | VCN generation | GLFIX (15.8.1) | VDA/VCN (15.8.1) | VDA/VCN (26.7.1) |
 | --- | --- | --- | --- | --- |
-| Renoir / Green Sardine `0x1638` | VCN 2.2 | **validated** | **validated** | **unsupported** (data pending) |
-| Renoir `0x1636` | VCN 2.2 | experimental | experimental (same 15.8.1 data; hardware not validated) | **unsupported** |
-| Cezanne `0x164C` | VCN 2.2 | experimental | experimental | **unsupported** |
-| Barcelo `0x15E7` | VCN 2.2 | experimental | experimental | **unsupported** |
+| Renoir / Green Sardine `0x1638` | VCN 2.2 | **validated** | **validated** | experimental (data present, hardware pending) |
+| Renoir `0x1636` | VCN 2.2 | experimental | experimental (same 15.8.1 data; hardware not validated) | experimental (data present, hardware pending) |
+| Cezanne `0x164C` | VCN 2.2 | experimental | experimental | experimental (data present, hardware pending) |
+| Barcelo `0x15E7` | VCN 2.2 | experimental | experimental | experimental (data present, hardware pending) |
 | Raven `0x15DD` | VCN 1.x | experimental | **unsupported** (no VCN1 path) | **unsupported** |
 | Raven2 / Picasso `0x15D8` | VCN 1.x | experimental | **unsupported** (no VCN1 path) | **unsupported** |
 
@@ -64,26 +76,33 @@ recorded hardware validation.
 
 | Feature | Flag | 15.8.1 | 14.8.9 | 26.7.1 |
 | --- | --- | --- | --- | --- |
-| GL dual-source fix | `-NRedGLFix` (opt-in) | validated | experimental (exact pages/resolver) | experimental (exact 25G241 pages) |
-| Metal dual-quad fix | included with GLFIX | validated | experimental (exact pages/resolver) | experimental (gate/allow, runtime pending) |
-| VCN2 hardware decode | `-NRedVDA` | validated | experimental (imported) | unsupported |
-| AVC-only mode | `-NRedAVC` | validated | experimental (imported) | unsupported |
-| VCN kernel bridge | `-NRedVDA`/`-NRedAVC` | validated | experimental (byte-gated) | unsupported |
-| VDA user-space VA/GVA | with VDA flags | validated | experimental (imported) | unsupported |
-| HEVC encode | `-NRedVDA` | validated | experimental (imported) | unsupported |
+| GL dual-source fix | `-NRedGLFix` | validated | experimental (exact Sonoma pages) | experimental (exact 25G241 pages) |
+| Metal dual-quad fix | included with GLFIX | validated | experimental (exact Sonoma pages) | experimental (gate/allow, hardware pending) |
+| VCN2 hardware decode | `-NRedVDA` | validated | experimental (imported) | experimental (25G241, hardware pending) |
+| AVC-only mode | `-NRedAVC` | validated | experimental (imported) | experimental (25G241, hardware pending) |
+| VCN kernel bridge | `-NRedVDA`/`-NRedAVC` | validated | experimental (byte-gated) | experimental (25G241) |
+| VDA user-space VA/GVA | with VDA flags | validated | experimental (imported) | experimental (`VDAVADataTahoe`/GVA) |
+| HEVC encode | `-NRedVDA` | validated | experimental (imported) | experimental (25G241, hardware pending) |
+
+| H.264 decode + HEVC encode | `-NRedAVCEncode` | experimental | experimental | experimental |
+| Metal SubmitGuard | default; `-NRedNoSubmitGuard` disables | experimental | experimental | experimental |
+
+`-NRedAVC` takes precedence if combined with other video modes and removes both HEVC capabilities.
+`-NRedAVCEncode` disables HEVC hardware decoding while preserving HEVC hardware encoding. Hardware
+encode capability being exposed is not proof of correct output; local earlier tests found bad pixels.
 
 ## What "macOS 26 support" means here
 
 - The kext range already includes macOS 26 (Darwin 25) and the GLFIX/Metal 26.7.1 data path exists.
-- **VDA/VCN on macOS 26 is not implemented** in this tree: there is no `25G241` kernel-collection
-  call-site data and no macOS 26 `AMDRadeonVADriver2`/AppleGVA page data. Fabricating a variant from
-  the 15.8.1 tables would violate the exact-build/byte-verification contract.
-- To add it, collect on the target 26.7.1 machine:
-  - `SystemKernelExtensions.kc` (X5000/X6000 symbols and text);
-  - `AMDRadeonVADriver2` and AppleGVA shared-cache images/pages;
-  - the platform metadata used by `tools/collect_compat_data.py --include-kc`.
-  Then generate a `VCNData/25G241.hpp` variant and the VA/GVA tables, add selection entries, and run
-  the hardware validation on the target APU before changing the matrix.
+- **VDA/VCN on macOS 26** now has `25G241` kernel call-site data and `VDAVADataTahoe`/`VDAGVADataTahoe`,
+  but is still experimental until a real 26.7.1 boot/decode/encode test passes. Other builds only attempt the declared kernel-family adapters and contextual page fallbacks;
+  matching a family does not establish video compatibility.
+- `25G241` kernel data is now in `VCNData/25G241.hpp`; the user-space VDA tables are
+  `VDAVADataTahoe.hpp` / `VDAGVADataTahoe.hpp`. The remaining work is a real 26.7.1 boot and
+  decode/encode test on the target APU; only then can this row become `validated`.
+- For another 26.x build, collect `SystemKernelExtensions.kc`, `AMDRadeonVADriver2`, AppleGVA pages and
+  platform metadata on that build, generate the same data set, and hardware-validate it; 15.8.1 or
+  26.7.1 data must not be labeled validated for a different build.
 
 ## Evidence
 

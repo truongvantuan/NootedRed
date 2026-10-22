@@ -58,6 +58,9 @@ namespace UserSubmitGuardData {
         0x44, 0x33, 0x22, 0x11, 0x41, 0xFF, 0xE3,
     };
 
+    static_assert(MethodPatchSize >= 14, "method patch must fit an absolute indirect jump");
+    static_assert(PayloadJumpOffset + sizeof(UInt64) <= sizeof(Payload), "payload continuation must fit");
+
     inline UInt64 getMethodOffset(const UInt32 kernelMajor)
     {
         if (kernelMajor == 23) {

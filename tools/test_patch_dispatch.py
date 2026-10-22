@@ -77,8 +77,8 @@ auto getKernelVersion() { return static_cast<KernelVersion>(version.major()); }
 constexpr bool kGLFixDefaultEnabled = false;
 const int kGLDriverPatches_Sonoma[] = {23}, kGLDriverPatches_Sequoia[] = {24}, kGLDriverPatches_Tahoe[] = {25};
 constexpr size_t kGLDriverPatchCount_Sonoma = 1, kGLDriverPatchCount_Sequoia = 1, kGLDriverPatchCount_Tahoe = 1;
-const int kResolverSignatures[] = {24}, kResolverSignatures_Sonoma[] = {23};
-constexpr size_t kResolverSignatureCount = 1, kResolverSignatureCount_Sonoma = 1;
+const int kResolverSignatures[] = {24}, kResolverSignatures_Sonoma[] = {23}, kResolverSignatures_Tahoe[] = {25};
+constexpr size_t kResolverSignatureCount = 1, kResolverSignatureCount_Sonoma = 1, kResolverSignatureCount_Tahoe = 1;
 namespace GLFixSemantic { const int kPatches[] = {0}; constexpr size_t kPatchCount = 1; }
 class UserPatches {
 public:
@@ -101,6 +101,7 @@ public:
         NativeSite sites[16]{};
         size_t siteCount = 0;
         bool vda = false;
+        bool mismatchLogged = false;
     };
     const int* patches = nullptr;
     size_t patchCount = 0;
@@ -113,7 +114,7 @@ public:
     NativePage nativePages[1]{};
     size_t nativePageCount = 0;
     SInt32 vdaAppliedCount = 0;
-    bool enabled = false, vdaEnabled = false;
+    bool enabled = false, vdaEnabled = false, submitGuardEnabled = false;
     bool resolverOnly = false, resolverEnabled = false;
     bool semanticEnabled = false, semanticMTLEnabled = false, semanticResult = false;
     int resolverCalls = 0, semanticCalls = 0;
@@ -169,20 +170,27 @@ int main() {
     options("-NRedGLFix -NRedGLFixResolveOnly -NRedGLFixResolveOff", true, false, false, true, false, false);
     options("-NRedVDA", false, true, false, false, false, false);
     options("-NRedAVC", false, true, false, false, false, false);
+    options("-NRedAVCEncode", false, true, false, false, false, false);
     options("-NRedGLFix -NRedAVC", true, true, true, true, false, false);
     options("-NRedGLFix -NRedGLFixOff -NRedVDA", false, true, false, false, false, false);
     options("-NRedGLFixResolve -NRedGLFixSemanticMTL", false, false, false, false, false, false);
 
-    selection("-NRedGLFix", 23, 6, false, false, kGLDriverPatches_Sonoma);
-    selection("-NRedGLFix", 24, 6, false, false, kGLDriverPatches_Sequoia);
-    selection("-NRedGLFix", 25, 6, false, false, kGLDriverPatches_Tahoe);
+    selection("-NRedGLFix", 23, 6, true, true, kGLDriverPatches_Sonoma);
+    selection("-NRedGLFix", 24, 6, true, true, kGLDriverPatches_Sequoia);
+    selection("-NRedGLFix", 25, 6, true, true, kGLDriverPatches_Tahoe);
     selection("-NRedGLFix", 24, 7, true, true, kGLDriverPatches_Sequoia);
     selection("-NRedGLFix", 25, 7, true, true, kGLDriverPatches_Tahoe);
     selection("-NRedGLFix -NRedGLFixSemanticMTL", 23, 6, true, true, kGLDriverPatches_Sonoma);
     selection("-NRedGLFix -NRedGLFixSemanticMTL -NRedGLFixSemanticOff", 23, 6, false, false, kGLDriverPatches_Sonoma);
     selection("-NRedGLFix -NRedGLFixSemanticOff", 24, 7, false, false, kGLDriverPatches_Sequoia);
-    selection("-NRedGLFix -NRedGLFixResolveOff", 23, 6, false, false, kGLDriverPatches_Sonoma);
+    selection("-NRedGLFix -NRedGLFixResolveOff", 23, 6, true, true, kGLDriverPatches_Sonoma);
     selection("-NRedVDA", 24, 7, false, false, kGLDriverPatches_Sequoia);
+
+    args = "";
+    { UserPatches p; p.init(); require(p.submitGuardEnabled, "SubmitGuard defaults on independently of GL/VDA"); }
+    args = "-NRedNoSubmitGuard";
+    { UserPatches p; p.init(); require(!p.submitGuardEnabled, "SubmitGuard opt-out"); }
+    args = "";
 
     UInt8 stock[4096], data[4096], find = 0x11, replace = 0x22;
     std::memset(stock, 0xA5, sizeof(stock));
@@ -225,6 +233,7 @@ int main() {
     {
         auto p = fixture();
         data[0] ^= 1;
+        data[32] ^= 1;
         p.semanticResult = true;
         p.patchNativePage(data, 0xE000, nullptr, false);
         require(p.semanticCalls == 1 && !p.resolverCalls, "semantic match takes priority over resolver");
@@ -232,6 +241,7 @@ int main() {
     {
         auto p = fixture();
         data[0] ^= 1;
+        data[32] ^= 1;
         p.patchNativePage(data, 0xE000, nullptr, false);
         require(p.semanticCalls == 1 && p.resolverCalls == 1, "unmatched semantic page reaches resolver");
     }
@@ -248,7 +258,31 @@ int main() {
         require(data[32] == replace && p.vdaAppliedCount == 1,
                 "video-only mode works with all graphics fallbacks disabled");
     }
-    std::puts("passed 14 boot-argument, 10 semantic selection and 8 production page-dispatch checks");
+    {
+        auto p = fixture();
+        data[0] ^= 1;
+        p.patchNativePage(data, 0xE000, nullptr, false);
+        require(data[32] == replace && !p.semanticCalls && !p.resolverCalls,
+                "all-site fallback patches a changed page");
+        std::memcpy(data, stock, sizeof(data));
+        data[0] ^= 1;
+        p.patchNativePage(data, 0xE000, nullptr, false);
+        require(data[32] == replace, "site fallback is not suppressed for subsequent process pages");
+    }
+    {
+        auto p = fixture();
+        p.semanticMTLEnabled = true;
+        p.patchNativePage(data, 0xE000, nullptr, false);
+        require(!p.semanticEnabled && !p.semanticMTLEnabled, "exact rendering application stops scanning");
+    }
+    {
+        auto p = fixture();
+        data[20] ^= 1;
+        p.patchNativePage(data, 0xE000, nullptr, false);
+        require(data[32] == find && p.semanticCalls == 1 && p.resolverCalls == 1,
+                "short patch bytes with changed surrounding code do not qualify for site fallback");
+    }
+    std::puts("production boot-argument, selection, fallback and page-dispatch checks passed");
 }
 '''
 

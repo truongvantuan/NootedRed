@@ -32,3 +32,12 @@ python3 tools/gen_vcn_kernel_data.py \
 - 头文件以 `using` 别名复用 `VCNKernelData.hpp` 的 struct 类型（运行期免模板选择）。
 - 新增 `getCallPatches(count)` helper；X6000 调用点块运行期选 `getCallPatches` / `SignalSymbol`，`addresses[32]` 数组 + 计数上限守卫，替代 `arrsize(CallPatches_Sequoia)`。
 - `isSupportedOS()` 增加 Darwin 25.6；`isSupportedBuild()` 增加 `25G` 前缀分支。
+
+
+## Combined fork migration (2026-10-22)
+
+The original upstream commands above describe its legacy header format. This combined fork stores
+this data in `NootedRed/VCNData/25G241.hpp` (`VCNData::Build25G241`) and uses `VCNData::Variant`.
+To regenerate from an offline target, use `tools/gen_vcn_kernel_data.py --root <target-root>
+--darwin 25.6.0 --kc <target-kc> --output NootedRed/VCNData/25G241.hpp`. The generator also supports
+`--check`; imported data without local identity is not claimed to pass regeneration on this host.

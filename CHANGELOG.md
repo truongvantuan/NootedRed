@@ -1,5 +1,15 @@
 # Change log
 
+## v0.9.3 — combined upstream update (2026-10-22)
+
+- Integrate Weachy `7387e01` and xiaot-evo `0efa6f4`, retaining local build/CI fixes and resolver behavior.
+- Add Tahoe VCN/VDA data and byte-verified Sonoma/Sequoia/Tahoe family adapters, including Sequoia 24G.
+- Add Metal SubmitGuard, AVC decode with HEVC encode mode, hybrid-GPU handling and GFXOFF diagnostics.
+- Pause the PM4 compute submission hook during the Quick Look/Metal hang investigation.
+- Keep semantic fallback until an exact rendering page applies; guard native site fallback with code context.
+- Add Firefox/Zen hardware-decoding launcher and adapt generation/diagnostic tools for the new modes.
+- Expand host regression checks. macOS build and hardware validation remain pending.
+
 ## v0.9.2 — xiaot-evo update (2026-10-20)
 
 - Merge xiaot-evo `348948e` after its history rewrite, preserving Weachy's automatic resolver and local compiler fixes.

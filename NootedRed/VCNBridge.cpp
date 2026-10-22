@@ -52,8 +52,7 @@ namespace
     // Diagnostic: keep the X5000 GFXOFF state disabled while the bridged VCN0 engine is active.
     const char* const kBootArgNoGfxOff = "-NRedVCNNoGfxOff";
 
-    // Data is compiled per exact macOS build.  There is no family-prefix fallback: osversion must name
-    // one of the builds for which a complete table set exists.
+    // Prefer exact-build data, with explicitly declared family variants as byte-verified fallbacks.
     bool isSupportedOS()
     {
         const auto& version = currentKernelVersion();
@@ -62,7 +61,7 @@ namespace
 
     // The build string is checked once the accelerator starts, not in NRed::init: the early kext-load
     // phase can run before `osversion` is populated, which would otherwise disable a valid bridge.
-    // This exact-build lookup is the only gate before X6000 data is applied; an empty or unknown build
+    // This variant lookup is the gate before X6000 data is applied; an empty or unknown build
     // string returns nullptr and the bridge stays inert.
     const VCNData::Variant* currentVariant()
     {
@@ -190,7 +189,7 @@ void VCNBridge::init()
 
     if (!isSupportedOS()) {
         SYSLOG("VCN",
-               "VCN data is for macOS 15.8.1 (Darwin 24.6) or 14.8.9 (Darwin 23.6); the hardware decode boot "
+               "No VCN data exists for this Darwin version; the hardware decode boot "
                "argument is ignored on this build");
         this->requested = false;
         return;
@@ -658,7 +657,7 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
         }
 
         // Verify every generated call-site before touching any of them, then apply all-or-nothing.
-        // The variant was selected by exact build above; there is no fallback table.
+        // The selected exact-build or family variant still requires every original byte to match.
         const auto  callPatchCount = variant->callPatchCount;
         const auto* const callPatches = variant->callPatches;
         if (callPatches == nullptr || callPatchCount == 0 || callPatchCount > VCNData::kMaxCallPatches) {

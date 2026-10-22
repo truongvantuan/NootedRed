@@ -47,14 +47,14 @@ void VDA::init()
 
     this->requested = vdaReq || avcReq || avcEncReq;
     this->avcOnly   = avcReq || avcEncReq;
-    this->hevcEncodeAllowed = vdaReq || avcEncReq;
+    this->hevcEncodeAllowed = !avcReq && (vdaReq || avcEncReq);
 
     if (!this->requested) {
         DBGLOG("VDA", "Hardware video decode is disabled; add -NRedVDA, -NRedAVC or -NRedAVCEncode to opt in (experimental)");
         return;
     }
 
-    if (avcEncReq) {
+    if (avcEncReq && !avcReq) {
         DBGLOG("VDA", "-NRedAVCEncode is set: Hardware AVC decode and HEVC encode enabled, HEVC decode disabled (software fallback)");
     }
     else if (this->avcOnly) {
@@ -81,7 +81,7 @@ void VDA::processPatcher()
     if (!this->requested) { return; }
 
     const char* modeName = "-NRedVDA";
-    if (checkKernelArgument(kBootArgAVCEncode)) {
+    if (checkKernelArgument(kBootArgAVCEncode) && !checkKernelArgument(kBootArgAVC)) {
         modeName = "-NRedAVCEncode";
     } else if (this->avcOnly) {
         modeName = "-NRedAVC";

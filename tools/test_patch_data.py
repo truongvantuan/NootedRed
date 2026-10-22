@@ -112,7 +112,7 @@ def check_page_patches(arrays, text):
 
 
 def signature_page_name(arrays, page_offset, context_name):
-    family = "Sonoma" if context_name.endswith("_Sonoma") else "Sequoia"
+    family = "Sonoma" if context_name.endswith("_Sonoma") else "Tahoe" if context_name.endswith("_Tahoe") else "Sequoia"
     if page_offset.startswith("~"):
         stem = "kMTLControlPage"
     else:
@@ -152,7 +152,8 @@ def check_signatures(arrays, text):
         page = arrays[page_name]
         check(len(page) == 0x1000, f"{page_name} must be one 4 KiB page")
 
-        offsets = find_all(page, context)
+        offsets = [i for i in range(len(page) - len(context) + 1)
+                   if all((page[i+j] & mask[j]) == (context[j] & mask[j]) for j in range(len(context)))]
         check(offsets, f"{context_name} context not found in {page_name}")
         for offset in offsets:
             site = page[offset + patch_offset : offset + patch_offset + len(replace)]
@@ -170,8 +171,10 @@ def check_patch_sets(text):
         check((major, minor) <= (max_major, max_minor), f"PatchSet {name}: minVersion > maxVersion")
         versions.add((major, minor))
         check("KernelVersion" not in name, f"PatchSet {name}: malformed entry")
-    check((24, 6) in versions, "missing a Darwin 24.6 (macOS 15.8.1) PatchSet")
-    check((25, 6) in versions, "missing a Darwin 25.6 (macOS 26.7.1) PatchSet")
+    check(any((int(m[2]), int(m[3])) <= (24, 6) <= (int(m[4]), int(m[5])) for m in sets),
+          "missing a PatchSet covering Darwin 24.6")
+    check(any((int(m[2]), int(m[3])) <= (25, 6) <= (int(m[4]), int(m[5])) for m in sets),
+          "missing a PatchSet covering Darwin 25.6")
     return len(sets)
 
 

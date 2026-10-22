@@ -1,5 +1,5 @@
 #!/bin/bash
-# VDA hardware-decode test: run after booting with -NRedVDA or -NRedAVC.
+# VDA hardware-decode test: run after booting with -NRedVDA or -NRedAVC/-NRedAVCEncode.
 # Collects the kernel/user-space markers, then decodes small H.264/HEVC clips with VideoToolbox and compares
 # the output with software decoding. Does not install kexts or reboot. A GPU hang is possible on a failing
 # engine; keep the rollback runbook ready.
@@ -25,12 +25,14 @@ BOOTARGS="$(sysctl -n kern.bootargs 2>/dev/null || true)"
 echo "boot-args: ${BOOTARGS}"
 
 AVC_ONLY=0
+HEVC_ENCODE=1
 case " ${BOOTARGS} " in
-    *" -NRedAVC "*) AVC_ONLY=1 ;;
+    *" -NRedAVC "*) AVC_ONLY=1; HEVC_ENCODE=0 ;;
+    *" -NRedAVCEncode "*) AVC_ONLY=1 ;;
     *" -NRedVDA "*) ;;
-    *) fail "neither -NRedVDA nor -NRedAVC is in boot-args" ;;
+    *) fail "no video acceleration mode is present in boot-args" ;;
 esac
-echo "AVC-only mode: ${AVC_ONLY} (HEVC tests skipped when enabled)"
+echo "AVC decode only: ${AVC_ONLY}; HEVC hardware encode allowed: ${HEVC_ENCODE}"
 
 echo
 echo "== kernel/user-space markers =="
@@ -132,7 +134,7 @@ else
         warn "ffmpeg has no libx264 encoder; H.264 test skipped"
     fi
     if [[ ${AVC_ONLY} -eq 1 ]]; then
-        echo "SKIP  HEVC decode: -NRedAVC requests software fallback"
+        echo "SKIP  HEVC decode: selected mode requests software fallback"
     elif ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265; then
         make_clip "${WORK}/hevc-720p.mp4" -f lavfi -i testsrc2=size=1280x720:rate=30 -t 2 \
             -c:v libx265 -pix_fmt yuv420p
@@ -162,7 +164,7 @@ if command -v ffmpeg >/dev/null 2>&1; then
     echo
     echo "== hardware encode (VideoProc acceptance) =="
     for encoder in h264_videotoolbox hevc_videotoolbox; do
-        if [[ ${AVC_ONLY} -eq 1 && "${encoder}" == hevc_videotoolbox ]]; then
+        if [[ ${HEVC_ENCODE} -eq 0 && "${encoder}" == hevc_videotoolbox ]]; then
             echo "SKIP  HEVC encode: -NRedAVC removes HEVC capabilities"
             continue
         fi

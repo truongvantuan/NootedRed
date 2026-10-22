@@ -26,14 +26,13 @@
 // Evidence and derivations: analysis/vcn-2671-kernel-data.md.
 
 #pragma once
+#include <VCNData.hpp>
 
-#include <IOKit/IOTypes.h>
-
-#include <VCNKernelData.hpp>
-
-namespace VCNKernelDataTahoe {
-    using VCNKernelData::CallPatch;
-    using VCNKernelData::SlotGuard;
+namespace VCNData::Build25G241
+{
+    inline constexpr char Build[] = "25G241";
+    inline constexpr UInt32 DarwinMajor = 25;
+    inline constexpr UInt32 DarwinMinor = 6;
 
     inline constexpr UInt8 Getter5000_1[] = {
         0x55, 0x48, 0x89, 0xE5, 0x8A, 0x87, 0x0E, 0x03,
@@ -211,20 +210,17 @@ namespace VCNKernelDataTahoe {
         },
     };
 
-    inline const CallPatch* getCallPatches(size_t& count) {
-        count = sizeof(CallPatches) / sizeof(CallPatches[0]);
-        return CallPatches;
-    }
-
     inline constexpr char SignalSymbol[] = "__ZN26AMDRadeonX6000_AMDHardware22signalGPUWorkSubmittedEv";
 
-    inline constexpr char SourceDescription[] =
-        "macOS 26.7.1 (25G241) x86_64, Darwin 25.6.0; "
+    inline constexpr UInt32 kCallPatchCount = sizeof(CallPatches) / sizeof(CallPatches[0]);
+    static_assert(kCallPatchCount <= kMaxCallPatches, "25G241 call-site table must fit the bridge array");
+    static_assert(sizeof(Guards5000) / sizeof(Guards5000[0]) == 6, "25G241 X5000 guard table must contain 6 entries");
+    static_assert(sizeof(Guards6000) / sizeof(Guards6000[0]) == 6, "25G241 X6000 guard table must contain 6 entries");
+
+    inline constexpr char SourceDescription[] ="macOS 26.7.1 (25G241) x86_64, Darwin 25.6.0; "
         "SystemKernelExtensions.kc UUID 07377859-55FE-9F0A-2469-D6714FE1AC25; "
         "AMDRadeonX5000 7.1.8 24649; AMDRadeonX6000 7.1.8 24649";
 
-    // Source identity for runtime diagnostics; the bridge must compare these against
-    // the loaded kernel collection/kexts before installing any guard or patch.
     inline constexpr char KernelCollectionUUID[] = "07377859-55FE-9F0A-2469-D6714FE1AC25";
     inline constexpr char DriverUUID5000[] = "DCBFBEBE-4DA8-397B-AEFD-0E11AFF1C119";
     inline constexpr char DriverUUID6000[] = "DCD61202-702C-339A-840E-6E590CA6D74C";
@@ -232,4 +228,30 @@ namespace VCNKernelDataTahoe {
     inline constexpr char DriverVersion6000[] = "AMDRadeonX6000 7.1.8 24649";
     inline constexpr char DriverSHA256_5000[] = "4e51c0f3e9474a36f0d5f2953daa10274d600bdbd8fccaaaf8b201d8e289f218";
     inline constexpr char DriverSHA256_6000[] = "8670010f0a10eae27bf503b7759dccd49d6ebe62d02e2445e2147fb609d24457";
-}    // namespace VCNKernelDataTahoe
+
+    inline constexpr Variant kData = {
+        3,
+        Build,
+        DarwinMajor,
+        DarwinMinor,
+        SourceDescription,
+        CallPatches,
+        kCallPatchCount,
+        Guards5000,
+        sizeof(Guards5000) / sizeof(Guards5000[0]),
+        Guards6000,
+        sizeof(Guards6000) / sizeof(Guards6000[0]),
+        Table5000,
+        Table6000,
+        SignalSymbol,
+        false,
+        true,
+        KernelCollectionUUID,
+        DriverUUID5000,
+        DriverUUID6000,
+        DriverVersion5000,
+        DriverVersion6000,
+        DriverSHA256_5000,
+        DriverSHA256_6000,
+    };
+}    // namespace VCNData::Build25G241

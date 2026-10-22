@@ -53,7 +53,8 @@ namespace VCNData
 
     struct Variant
     {
-        // Stable numeric identifier for diagnostics (1 = Sonoma 23J631, 2 = Sequoia 24H32).
+        // Stable numeric identifier for diagnostics (1 = 23J631, 2 = 24H32, 3 = 25G241,
+        // 4 = 23H prefix, 5 = 23G prefix, 6 = 23J prefix, 7 = 24H prefix, 8 = 25G prefix, 9 = 24G prefix).
         UInt32 id;
         const char* build;
         UInt32      darwinMajor;
@@ -72,6 +73,11 @@ namespace VCNData
         const char* table6000;
         const char* signalSymbol;
 
+        // Exact build strings are the default.  Prefix variants reuse an existing byte table for a
+        // nearby patch release (e.g. 14.7.x "23H"/"23G" reusing the 14.8.9 tables) and still verify every
+        // guard and call-site byte before writing.
+        bool buildPrefix;
+
         // Identity is only available when the data was generated from a locally verified kernel
         // collection.  Imported or reconstructed data deliberately carries empty strings.
         bool        hasKernelIdentity;
@@ -84,7 +90,7 @@ namespace VCNData
         const char* driverSHA256_6000;
     };
 
-    // Exact build lookup.  osversion must be populated and match the variant's build string exactly.
+    // Exact builds take priority over declared family prefixes. Empty or unrelated builds are rejected.
     const Variant* findVariant(const char* osversion, UInt32 darwinMajor, UInt32 darwinMinor);
 
     // Darwin-only lookup for the early X5000 verification path, before osversion may be populated.

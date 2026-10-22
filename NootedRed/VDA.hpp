@@ -49,6 +49,6 @@ public:
     // True when the user opted in with -NRedAVC or -NRedAVCEncode (AVC/H.264 decode only, HEVC decode disabled).
     bool isAVCOnly() const { return this->avcOnly; }
 
-    // True when HEVC hardware encode is allowed (-NRedVDA or -NRedAVCEncode).
+    // True when HEVC hardware encode is allowed (-NRedVDA or -NRedAVCEncode, unless -NRedAVC is also set).
     bool isHEVCEncodeAllowed() const { return this->hevcEncodeAllowed; }
 };

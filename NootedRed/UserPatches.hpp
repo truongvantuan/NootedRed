@@ -25,6 +25,7 @@
 #include <PenguinWizardry/KernelVersion.hpp>
 #include <Headers/kern_user.hpp>
 #include <libkern/OSTypes.h>
+#include <mach/machine.h>
 
 // Patches Apple's user-space OpenGL drivers, which is where the Chromium/GL corruption originates.
 //
@@ -37,8 +38,8 @@
 //    entries.  No process filter is registered on purpose, so that the patcher never injects the
 //    `__RESTRICT` segment into user processes; page patches are global in Lilu and do not need one.
 //  - macOS 11 and newer: a self-contained `_cs_validate_page`/`_cs_validate_range` hook.  A complete
-//    `kPageSize` page image has to match byte for byte before `find` is replaced with `replace`, so a
-//    patch can never hit an unrelated binary.  See analysis/lilu-userpatch.md for the details.
+//    `kPageSize` page image is the primary match; the contextual site, semantic and signature
+//    backends provide fallbacks for nearby builds. See docs/Combined-Fork.md for their guards.
 //
 // The GL table is gated by `-NRedGLFix`/`-NRedGLFixOff`; the optional VA/AppleGVA tables are a separate
 // `-NRedVDA` / `-NRedAVC` opt-in and only apply on supported VCN2 profiles after the kernel bridge is ready.

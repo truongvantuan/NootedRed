@@ -74,7 +74,7 @@ from bisect import bisect_right
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_HEADER = REPO_ROOT / "NootedRed" / "VDAGVAData.hpp"
+DEFAULT_HEADER = REPO_ROOT / "NootedRed" / "VDAGVADataSequoia.hpp"
 CACHE_CANDIDATES = (
     Path("/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld"),
     Path("/System/Cryptexes/OS/System/Library/dyld"),
@@ -95,7 +95,7 @@ PROFILES = {
         "gva_version": "113.56",
         "gva_image_uuid": "53DD765D087D322EA410BD22D586C08C",
         "branch_form": "sequoia",
-        "namespace_suffix": "",
+        "namespace_suffix": "Sequoia",
         "evidence_doc": "analysis/vda-1581-gva-data.md",
     },
     ("26.7.1", "25G241"): {

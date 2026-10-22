@@ -1,118 +1,116 @@
-# Combined NootedRed 0.9.2
+# Combined NootedRed 0.9.3
 
-This fork combines the `master` branches of
-[Weachy](https://github.com/weachy/NootedRed) and
-[xiaot-evo](https://github.com/xiaot-evo/NootedRed), preserving this repository's local compiler and CI fixes.
-The integration records both upstream histories as merge parents so future updates can use normal Git merges.
+This fork combines the `master` branches of [Weachy](https://github.com/weachy/NootedRed) and
+[xiaot-evo](https://github.com/xiaot-evo/NootedRed), preserving local compiler fixes, CI and regression tools.
 
-## Sources integrated on 2026-10-20
+## Sources integrated on 2026-10-22
 
-| Source | Revision | Contribution |
+| Source | Revision | Changes integrated |
 | --- | --- | --- |
-| Weachy | `ea71183b0c3b21acf222a22100d6aa3ee3b682c7` | Sonoma/Sequoia VDA data, AVC-only mode, minor-series VDA gates, Sonoma resolver, OS-specific GL/Metal tables |
-| xiaot-evo | `348948e1636b1a19fdf35e77700f3217328d24d2` | Semantic GL/Metal fallback, Tahoe gate/allow fix, reduced scanning, exact-build VCN variants, timestamped archives and documentation |
-| Local baseline | `ded3289a81cff99d3e1123b621fd02561811708c` | Compiler compatibility and release CI |
+| Weachy | `7387e010adea8bb57694857e83d7af207811b27b` | Tahoe VDA/resolver, hybrid GPU detection, `-NRedAVCEncode`, GFXOFF diagnostics, compute-hook pause, Metal SubmitGuard, offline generators and site fallback |
+| xiaot-evo | `0efa6f4f36117fb603be968c1341006bf4da8c37` | Tahoe VCN variant, family-prefix variants, corrected semantic scan stopping point, Firefox/Zen launcher |
+| Previous combined baseline | `2e88d17` | Local compiler/CI fixes, OS-specific rendering tables, semantic and signature fallback, per-build VCN data |
 
-Only these two forks' `master` branches are integrated. Research branches and other forks are excluded.
+Both source tips are recorded as merge ancestors. xiaot-evo rewrote its history again; its previous
+integrated `348948e` tree is identical to the rewritten `a4da11c` tree. The integration therefore uses
+the snapshot delta from that baseline, rather than replaying rewritten history over local fixes.
+Only these forks' `master` branches are included. No companion root patcher is shipped or installed.
 
-xiaot-evo force-rewrote its earlier history; the old `11dac5c` integration and the rewritten upstream
-tip are both retained as ancestors. The update compares the old/new source snapshots to preserve local
-compiler fixes, regression tools and Weachy's resolver behavior. The new architecture/root-patch files
-are upstream design proposals; this version does not ship or install a companion root patcher.
+## Rendering behavior and integration decisions
 
-## Rendering patch priority
+GLFIX remains opt-in. OS-specific exact pages are primary. A version/APU match alone no longer stops
+semantic scanning: it stops after an exact rendering page is applied. The explicit semantic QA override
+remains available. The signature resolver remains the final fallback, following this combined fork's
+existing policy; xiaot-evo's removal of its unused resolver is not applied over the actively used resolver.
+Tahoe retains the gate/allow exact patch, including the second allow-pattern occurrence.
 
-1. Exact driver-page images are checked first, including OS-family tables when the Darwin minor has no
-   dedicated entry. VA/AppleGVA pages additionally require a ready VCN bridge.
-2. A version/APU-matched native set disables semantic scanning by default, reducing repeated page scans.
-   `-NRedGLFixSemanticMTL` explicitly restores semantic scanning for QA; `-NRedGLFixSemanticOff` wins.
-   Without a matched set, semantic GL matching follows on unmatched pages and semantic Metal scanning
-   is automatic. OS-family exact pages remain the first path.
-3. The selected Sonoma/Sequoia signature resolver is the final fallback. It is enabled with the GL fix
-   by default, following Weachy's policy.
+Weachy's native site fallback is included with additional context checks: every original site and the
+16 surrounding bytes on each side must match the reference image. This permits unrelated page changes
+without identifying a page from a short instruction alone. VDA pages require a ready bridge. Repeated
+process pages are still patched; a one-shot diagnostic never suppresses subsequent patching. Resolver-only
+QA still skips rendering-page and semantic patches. Already-patched exact pages retain the fast path.
 
-Known Tahoe pages now use xiaot-evo's gate/allow Metal fix (including the second allow-pattern occurrence),
-replacing 0.9.1's experimental direct-field strategy. Experimental direct-field data remains available to
-the semantic QA/fallback path, but it is not the default exact-page Tahoe patch. Disabling the profile's
-graphics policy disables both fallback mechanisms. GLFix remains off by default.
+Metal SubmitGuard is enabled by default on Darwin 23/24/25, independently of GLFIX/VDA. It verifies the
+known method prologue, installs the upstream PM4 tail-filler payload and publishes IORegistry markers.
+`-NRedNoSubmitGuard` opts out. The PM4 compute submission vtable overwrite is paused, matching both
+upstreams' Quick Look/Metal hang investigation. Neither change is hardware-validated in this fork yet.
 
 ## Boot arguments
 
-Keep your existing unrelated boot arguments and append the desired feature flags.
-
 | Argument | Effect |
 | --- | --- |
-| `-NRedGLFix` | Opt into exact rendering pages and automatic signature fallback; semantic scanning depends on patch-set selection |
-| `-NRedGLFixOff` | Disable the rendering fix; overrides `-NRedGLFix` |
-| `-NRedGLFixSemanticMTL` | Explicitly enable semantic GL/Metal scanning even when a version-matched patch set exists |
-| `-NRedGLFixSemanticOff` | Disable semantic GL and Metal matching; exact pages and resolver remain available |
-| `-NRedGLFixResolveOff` / `-NRedGLFixNoResolve` | Disable the signature resolver, including resolver-only QA mode |
-| `-NRedGLFixResolve` | Legacy flag; redundant because the resolver is enabled with `-NRedGLFix` |
-| `-NRedGLFixResolveOnly` | GL QA mode: skip exact GL pages and semantic matching; VA/AppleGVA exact patches remain available |
+| `-NRedGLFix` | Enable exact rendering pages, contextual site fallback and automatic semantic/signature fallback |
+| `-NRedGLFixOff` | Disable rendering fixes; overrides GLFix |
+| `-NRedGLFixSemanticMTL` | Force semantic GL/Metal scanning, including after exact pages apply |
+| `-NRedGLFixSemanticOff` | Disable semantic matching; overrides the force flag |
+| `-NRedGLFixResolveOff` / `-NRedGLFixNoResolve` | Disable signature fallback |
+| `-NRedGLFixResolve` | Legacy redundant flag; resolver already follows GLFIX |
+| `-NRedGLFixResolveOnly` | Signature-only rendering QA; VDA exact pages remain available |
 | `-NRedVDA` | Request experimental H.264 and HEVC video acceleration |
-| `-NRedAVC` | Request the video bridge but remove HEVC decode/encode capability properties; overrides `-NRedVDA` |
+| `-NRedAVC` | Disable HEVC decode and encode capabilities; overrides the other video modes |
+| `-NRedAVCEncode` | H.264 hardware decode, software HEVC decode, preserve HEVC hardware encode |
+| `-NRedVCNNoGfxOff` | Optional GFXOFF hold when a video mode is requested |
+| `-NRedForceVDA` | Override the external AMD GPU block |
+| `-NRedNoSubmitGuard` | Disable the otherwise-default Metal SubmitGuard |
 
-For your existing full video configuration:
-
-```text
--NRedGLFix -NRedVDA
-```
-
-For H.264-only mode, replace `-NRedVDA` with `-NRedAVC`. The mode does not disable H.264 encoding or
-repair encoder output. For exact rendering-page matching only, use:
-
-```text
--NRedGLFix -NRedGLFixSemanticOff -NRedGLFixResolveOff
-```
-
-The standard NootedRed switches (`-NRedOff`, `-NRedDebug`, `-NRedBeta`, `-NRedNoAccel`,
-`-NRedDPDelay`, `AMDBacklight=0/1`, and debug extensions) remain supported.
+Keep unrelated boot arguments. Use one video mode; existing `-NRedGLFix -NRedVDA` remains supported.
+The standard NootedRed switches remain available. Hardware encoding still needs output validation.
 
 ## Video compatibility
 
-The bridge now requires exactly Sonoma 14.8.9 `23J631` / Darwin 23.6, or Sequoia 15.8.1 `24H32` /
-Darwin 24.6, and a supported VCN2 APU (`1636`, `1638`, `164C`, `15E7`) without an external GPU. This
-replaces 0.9.1's broad `23J`/`24H` prefix eligibility; unknown, empty, or suffixed build identifiers do
-not select an X6000 variant. The early X5000 path can select guards by Darwin version before the build
-string is populated, but X6000 writes require the exact build. ABI guards, call-site bytes and exact
-VA/AppleGVA page images must still match. Tahoe VDA is not enabled.
+Exact variants are Sonoma `23J631`, Sequoia `24H32` and Tahoe `25G241`. Declared family fallbacks cover
+`23G`/`23H`/`23J`, `24G`/`24H`, and `25G`, respectively, with Darwin minor 6. Every ABI guard/getter and
+original call-site byte is verified before writes. Empty or unrelated builds stay inert. Exact variants
+have priority. The per-build VCN architecture is retained; the duplicate legacy Tahoe kernel header is
+replaced by `VCNData/25G241.hpp`.
 
-Each supported build has a separate `VCNData/<build>.hpp`. `NRedVCNDataVariant` reports 1 for Sonoma or
-2 for Sequoia. `NRedVCNDataIdentityAvailable` distinguishes imported data without local identity from
-identity-bearing generated data; it is provenance metadata, not a fresh runtime UUID/SHA verification.
+Eligible APUs remain VCN2 (`1636`, `1638`, `164C`, `15E7`). NVIDIA or other non-AMD discrete GPUs no
+longer block video acceleration; an external AMD GPU still blocks it unless explicitly overridden.
+A kernel-family match is not proof that VA/AppleGVA page contexts match or that decoding/encoding works.
+See [COMPATIBILITY.md](COMPATIBILITY.md) for the feature matrix.
 
-## Build and verify
+`NRedVCNDataVariant` IDs: 1=`23J631`, 2=`24H32`, 3=`25G241`, 4=`23H`, 5=`23G`, 6=`23J`, 7=`24H`,
+8=`25G`, 9=`24G`. Family adapters carry no local kernel identity. Identity availability is provenance,
+not a fresh runtime UUID/SHA check.
+
+## Tools and verification
+
+The Firefox/Zen launcher is documented in
+[README-firefox-hwdecode-launcher.md](../tools/README-firefox-hwdecode-launcher.md). It disables the
+browser instance's RDD media sandbox and optionally changes profile hardware-decoding preferences.
+VCN generation retains the variant format and supports `--root`/`--darwin` for offline data. VA/GVA
+imports include Tahoe generation support. Hardware scripts recognize all three video modes and keep
+HEVC decode and encode checks separate.
+
+Run the host checks:
 
 ```sh
-xmake f -m release -a x86_64 -y
-sh tools/build-branch.sh -y
 python3 tools/test_patch_data.py
 python3 tools/test_patchset_selection.py
 python3 tools/test_gl_semantic_data.py
 python3 tools/test_patch_dispatch.py
 python3 tools/test_vcn_multibuild.py
+python3 tools/test_video_modes.py
 ```
 
-Artifacts are under `build/branches/<sanitized-branch>/macosx/x86_64/release/`.
-The kext and ZIP report version 0.9.2. New ZIPs include a local timestamp; older canonical archives are
-preserved. See [Build-Artifacts.md](Build-Artifacts.md).
+The last three require a C++ compiler (`CXX` may override it). They execute production option parsing,
+dispatch and VCN selection with kernel services stubbed. CI runs these checks on the existing macOS
+release workflow. On a Mac with AppleForge, build with:
 
-Host checks validate reference bytes, selection ranges, native-page dispatch with kernel calls stubbed,
-and the compiled production VCN selector against valid/invalid build identifiers. They do not establish
-boot, rendering, playback, encoding or sleep/wake stability. Version 0.9.2 needs a separate hardware boot
-before it can be called validated.
+```sh
+xmake f -m release -a x86_64 -y
+sh tools/build-branch.sh -y
+```
 
-Local Renoir `0x1636` / Sonoma `23J631` 0.9.1 tests loaded the same DEBUG executable with (a) GLFix+VDA,
-(b) GLFix alone, and (c) both optional features disabled. All three experienced a compute queue hang and
-channel reset, at approximately 89.8, 89.4, and 32.3 seconds after boot. These optional features are not
-required to trigger that failure; this update makes no claim to repair it. Earlier short 0.9.0 hardware
-decode probes passed, while encoding produced incorrect pixels. Hardware validation is per build and
-feature, not implied by successful initialization markers.
+Artifacts remain under `build/branches/<sanitized-branch>/macosx/x86_64/release/`, with timestamped ZIPs.
+The integration was prepared on Linux: a macOS kext build, SubmitGuard installation, boot, rendering,
+playback, encode output and sleep/wake checks remain pending. No kext was installed or deployed.
 
-After installing and booting the new kext, run `bash tools/vda_selftest.sh` and, when ready to exercise
-the GPU, `bash tools/vda_hwtest.sh`. Both accept VDA or AVC-only mode; AVC-only tests skip HEVC.
+Local Renoir `0x1636` / Sonoma `23J631` 0.9.1 tests found compute hangs with GLFIX+VDA, GLFIX only, and
+both disabled. Earlier 0.9.0 short decode probes passed but encoding produced incorrect pixels. The new
+hang-related changes require fresh hardware tests before claiming that those failures are fixed.
 
-## Future upstream updates
+## Future updates
 
 ```sh
 git fetch weachy master
@@ -121,7 +119,5 @@ git merge weachy/master
 git merge xiaot-evo/master
 ```
 
-Resolve overlaps against the combined behavior above, preserve local build fixes, run the host checks,
-and rebuild before deployment. The `origin` remote continues to point to your own repository.
-If an upstream branch is force-rewritten again, compare its previous and new tips before resolving a
-merge; do not replace the combined source wholesale just because the apparent new-commit count is large.
+Resolve overlaps against this combined behavior, retain compiler/CI fixes, and run the checks. If a
+source is rewritten, compare old/new snapshots before merging. `origin` remains your own repository.

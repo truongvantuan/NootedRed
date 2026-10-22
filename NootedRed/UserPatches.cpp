@@ -241,10 +241,10 @@ namespace
          sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000},
         {kResolverDualCtx_Tahoe, kResolverMask32, sizeof(kResolverDualCtx_Tahoe), 16, kGLDriverDualQuadReplace,
          sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000},
-        {kResolverGateCtx_Tahoe, kResolverMask32, sizeof(kResolverGateCtx_Tahoe), 16, kMTLGateReplace_Tahoe,
-         sizeof(kMTLGateReplace_Tahoe), 0, 1, ~static_cast<UInt64>(0)},
-        {kResolverAllowCtx_Tahoe, kResolverMask32, sizeof(kResolverAllowCtx_Tahoe), 16, kMTLAllowReplace_Tahoe,
-         sizeof(kMTLAllowReplace_Tahoe), 0, 1, ~static_cast<UInt64>(0)},
+        {kResolverGateCtx_Tahoe, kResolverMask32, sizeof(kResolverGateCtx_Tahoe), 16, kTahoeMTLGateReplace,
+         sizeof(kTahoeMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
+        {kResolverAllowCtx_Tahoe, kResolverMask32, sizeof(kResolverAllowCtx_Tahoe), 16, kTahoeMTLAllowReplace,
+         sizeof(kTahoeMTLAllowReplace), 0, 1, ~static_cast<UInt64>(0)},
     };
     constexpr size_t kResolverSignatureCount_Tahoe = arrsize(kResolverSignatures_Tahoe);
 
@@ -441,14 +441,9 @@ void UserPatches::selectPatchSet()
         this->signatures     = set.signatures;
         this->signatureCount = set.signatureCount;
         for (auto& applied : this->signatureApplied) { applied = 0; }
-        // Avoid walking every validated page with the semantic backend when a native set exists.
-        // Preserve the explicit semantic QA override; SemanticOff still takes precedence in init().
-        if ((this->semanticEnabled || this->semanticMTLEnabled)
-            && !checkKernelArgument(kBootArgGLFixSemanticMTL)) {
-            this->semanticEnabled = false;
-            this->semanticMTLEnabled = false;
-            SYSLOG("UserPatch", "Exact patch set matched; semantic scanning disabled");
-        }
+        // A version range does not prove the exact page will match. Keep both semantic
+        // paths available until an exact rendering page has actually been applied.
+        if (this->semanticEnabled) { this->semanticMTLEnabled = true; }
         SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
                version.major(), version.minor(), apus);
         return;
@@ -1060,6 +1055,11 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
 
         DBGLOG("UserPatch", "Patched %zu site(s) in a user-space driver page", page.siteCount);
 
+        if (!page.vda && !checkKernelArgument(kBootArgGLFixSemanticMTL)) {
+            this->semanticEnabled = false;
+            this->semanticMTLEnabled = false;
+        }
+
         if (page.vda) {
             const auto applied = static_cast<UInt32>(OSIncrementAtomic(&this->vdaAppliedCount) + 1);
             NRed::singleton().setProp32("NRedVCNUserApplied", applied);
@@ -1080,8 +1080,13 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
     // sites and only registers offsets found by scanning with `offset + size <= kPageSize`, and `data`
     // always addresses a full page here.
     for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
+        if (this->isPatchedPage(this->nativePages[pageIndex], static_cast<const UInt8*>(data))) { return; }
+    }
+
+    for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
         auto& page = this->nativePages[pageIndex];
-        if (page.siteCount == 0 || page.mismatchLogged) { continue; }
+        if (this->resolverOnly && !page.vda) { continue; }
+        if (page.siteCount == 0) { continue; }
         bool allSitesMatch = true;
         for (size_t siteIndex = 0; siteIndex < page.siteCount; siteIndex++) {
             const auto& site = page.sites[siteIndex];
@@ -1094,6 +1099,16 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
                 break;
             }
             if (memcmp(static_cast<const UInt8*>(data) + site.offset, site.find, site.size) != 0) {
+                allSitesMatch = false;
+                break;
+            }
+            // A two- or three-byte instruction alone is not enough to identify a driver page.
+            // Preserve the site's surrounding code while allowing unrelated page bytes to differ.
+            const auto contextStart = site.offset > 16 ? site.offset - 16 : 0;
+            const auto contextEnd = site.offset + site.size + 16 < kPageSize
+                                        ? site.offset + site.size + 16 : kPageSize;
+            if (memcmp(static_cast<const UInt8*>(data) + contextStart, page.image + contextStart,
+                       contextEnd - contextStart) != 0) {
                 allSitesMatch = false;
                 break;
             }
@@ -1119,10 +1134,12 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
             SYSLOG("UserPatch", "Failed to restore kernel write protection for site fallback");
         }
 
-        page.mismatchLogged = true;
-        SYSLOG("UserPatch",
-               "Page %zu: stored page image differed, but all %zu patch site(s) matched; site-patched successfully",
-               pageIndex, page.siteCount);
+        if (!page.mismatchLogged) {
+            page.mismatchLogged = true;
+            SYSLOG("UserPatch",
+                   "Page %zu: stored image differed, but all %zu site contexts matched; site-patched successfully",
+                   pageIndex, page.siteCount);
+        }
 
         if (page.vda) {
             const auto applied = static_cast<UInt32>(OSIncrementAtomic(&this->vdaAppliedCount) + 1);

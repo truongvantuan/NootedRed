@@ -113,7 +113,7 @@ void NRed::init()
                 VDAGVADataSonoma::Patches, sizeof(VDAGVADataSonoma::Patches) / sizeof(VDAGVADataSonoma::Patches[0]));
         }
 #endif
-    } else if (getKernelVersion() >= KernelVersion::Tahoe) {
+    } else if (getKernelVersion() == KernelVersion::Tahoe) {
 #if __has_include(<VDAVADataTahoe.hpp>)
         if constexpr ((sizeof(VDAVADataTahoe::Patches) / sizeof(VDAVADataTahoe::Patches[0])) > 0) {
             UserPatches::singleton().registerVDAFix(VDAVADataTahoe::Patches,
@@ -126,17 +126,17 @@ void NRed::init()
                                                     (sizeof(VDAGVADataTahoe::Patches) / sizeof(VDAGVADataTahoe::Patches[0])));
         }
 #endif
-    } else if (getKernelVersion() >= KernelVersion::Sequoia) {
+    } else if (getKernelVersion() == KernelVersion::Sequoia) {
 #if __has_include(<VDAVADataSequoia.hpp>)
         if constexpr ((sizeof(VDAVADataSequoia::Patches) / sizeof(VDAVADataSequoia::Patches[0])) > 0) {
             UserPatches::singleton().registerVDAFix(VDAVADataSequoia::Patches,
                                                     (sizeof(VDAVADataSequoia::Patches) / sizeof(VDAVADataSequoia::Patches[0])));
         }
 #endif
-#if __has_include(<VDAGVAData.hpp>)
-        if constexpr (sizeof(VDAGVAData::Patches) / sizeof(VDAGVAData::Patches[0]) > 0) {
-            UserPatches::singleton().registerVDAFix(VDAGVAData::Patches,
-                                                    sizeof(VDAGVAData::Patches) / sizeof(VDAGVAData::Patches[0]));
+#if __has_include(<VDAGVADataSequoia.hpp>)
+        if constexpr (sizeof(VDAGVADataSequoia::Patches) / sizeof(VDAGVADataSequoia::Patches[0]) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAGVADataSequoia::Patches,
+                                                    sizeof(VDAGVADataSequoia::Patches) / sizeof(VDAGVADataSequoia::Patches[0]));
         }
 #endif
     }

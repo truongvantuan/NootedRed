@@ -20,15 +20,11 @@ DARWIN="$(uname -r)"
 DARWIN_MAJOR="$(echo "${DARWIN}" | cut -d. -f1)"
 DARWIN_MINOR="$(echo "${DARWIN}" | cut -d. -f2)"
 echo "macOS ${PRODUCT} (${BUILD}), Darwin ${DARWIN}"
-if [[ "${DARWIN_MAJOR}" == "24" && "${DARWIN_MINOR}" == "6" ]]; then
-    pass "OS/build matches macOS 15.x (Darwin 24.6) Sequoia series"
-elif [[ "${DARWIN_MAJOR}" == "23" && "${DARWIN_MINOR}" == "6" ]]; then
-    pass "OS/build matches macOS 14.x (Darwin 23.6) Sonoma series (${BUILD})"
-elif [[ "${DARWIN_MAJOR}" == "25" && "${DARWIN_MINOR}" == "6" ]]; then
-    pass "OS/build matches macOS 26.x (Darwin 25.6) Tahoe series (${BUILD})"
-else
-    fail "OS/build does not match supported VDA data (macOS 14/15/26 Darwin 23.6/24.6/25.6)"
-fi
+case "${DARWIN_MAJOR}.${DARWIN_MINOR}:${BUILD}" in
+    23.6:23G*|23.6:23H*|23.6:23J*|24.6:24G*|24.6:24H*|25.6:25G*)
+        pass "OS/build has an exact or byte-gated family VCN variant" ;;
+    *) fail "no VCN variant for this Darwin/build combination" ;;
+esac
 
 # --- iGPU identity ---
 DISPLAY_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null)"
@@ -49,10 +45,10 @@ BOOTARGS="$(sysctl -n kern.bootargs 2>/dev/null || true)"
 
 # --- X6000 accelerator: it may be loaded by this experimental bridge, but not preloaded for a dGPU ---
 if kextstat 2>/dev/null | grep -q 'com.apple.kext.AMDRadeonX6000 '; then
-    if echo "${BOOTARGS:-$(sysctl -n kern.bootargs 2>/dev/null || true)}" | grep -q -- '-NRedVDA'; then
-        pass "AMDRadeonX6000 is loaded (expected when -NRedVDA is active)"
+    if echo "${BOOTARGS:-$(sysctl -n kern.bootargs 2>/dev/null || true)}" | grep -qE -- '-NRed(VDA|AVCEncode|AVC)( |$)'; then
+        pass "AMDRadeonX6000 is loaded (expected when a video acceleration mode is active)"
     else
-        fail "AMDRadeonX6000 is already loaded without -NRedVDA; the VDA bridge must not be enabled"
+        fail "AMDRadeonX6000 is already loaded without a video acceleration boot argument; the VDA bridge must not be enabled"
     fi
 else
     pass "AMDRadeonX6000 is not loaded as an accelerator"
@@ -67,18 +63,16 @@ else
 fi
 
 # --- generated data matches this machine's cache/kernel collection ---
-if [[ "${DARWIN_MAJOR}" == "23" ]]; then
-    if [[ -f "${ROOT}/NootedRed/VCNKernelData.hpp" && -f "${ROOT}/NootedRed/VDAVADataSonoma.hpp" && -f "${ROOT}/NootedRed/VDAGVADataSonoma.hpp" ]]; then
-        pass "Sonoma VDA headers present (VCNKernelData, VDAVADataSonoma, VDAGVADataSonoma)"
-    else
-        fail "missing Sonoma VDA headers"
-    fi
-elif [[ "${DARWIN_MAJOR}" == "24" ]]; then
-    if [[ -f "${ROOT}/NootedRed/VCNKernelData.hpp" && -f "${ROOT}/NootedRed/VDAVADataSequoia.hpp" && -f "${ROOT}/NootedRed/VDAGVADataSequoia.hpp" ]]; then
-        pass "Sequoia VDA headers present (VCNKernelData, VDAVADataSequoia, VDAGVADataSequoia)"
-    else
-        fail "missing Sequoia VDA headers"
-    fi
+case "${DARWIN_MAJOR}" in
+    23) KERNEL_HEADER="VCNData/23J631.hpp"; DATA_SUFFIX="Sonoma" ;;
+    24) KERNEL_HEADER="VCNData/24H32.hpp"; DATA_SUFFIX="Sequoia" ;;
+    25) KERNEL_HEADER="VCNData/25G241.hpp"; DATA_SUFFIX="Tahoe" ;;
+    *) KERNEL_HEADER="unsupported"; DATA_SUFFIX="unsupported" ;;
+esac
+if [[ -f "${ROOT}/NootedRed/${KERNEL_HEADER}" && -f "${ROOT}/NootedRed/VDAVAData${DATA_SUFFIX}.hpp" && -f "${ROOT}/NootedRed/VDAGVAData${DATA_SUFFIX}.hpp" ]]; then
+    pass "VCN and VA/AppleGVA headers are present; runtime bytes must still match"
+else
+    fail "missing VCN or VA/AppleGVA data for this OS"
 fi
 
 # --- build artifact (per-branch layout, with the old path as fallback) ---
@@ -110,7 +104,7 @@ fi
 
 # --- boot arguments / EFI ---
 echo "boot-args: ${BOOTARGS}"
-if echo "${BOOTARGS}" | grep -q -- '-NRedVDA'; then
+if echo "${BOOTARGS}" | grep -qE -- '-NRed(VDA|AVCEncode|AVC)( |$)'; then
     warn "-NRedVDA is already in boot-args; the next boot will run the experimental path"
 else
     pass "-NRedVDA is absent (default-off path; add it only for the experiment)"
