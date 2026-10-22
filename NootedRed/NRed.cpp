@@ -56,18 +56,29 @@
 #include <libkern/c++/OSMetaClass.h>
 #include <mach/i386/vm_types.h>
 
-// Generated user-space VDA patch tables, one set per supported macOS build.  The 15.8.1 set is produced
-// by tools/gen_vda_*_data.py in this tree; the 14.8.9 set is imported from the multi-OS fork
-// weachy/NootedRed and generated there by the same pipeline.  VDA user-space patching is a no-op if the
-// selected set is absent.
+// Generated user-space VDA patch tables (macOS 14 Sonoma, 15.8.1 Sequoia, 26.7.1 Tahoe).  They are
+// produced by tools/gen_vda_*_data.py and are committed with this branch; the VCN bridge itself does
+// not depend on them, but VDA user-space patching is a no-op if they are absent.
 #if __has_include(<VDAVADataSonoma.hpp>)
 #include <VDAVADataSonoma.hpp>
+#endif
+#if __has_include(<VDAVADataSequoia.hpp>)
+#include <VDAVADataSequoia.hpp>
+#endif
+#if __has_include(<VDAVADataTahoe.hpp>)
+#include <VDAVADataTahoe.hpp>
 #endif
 #if __has_include(<VDAVAData.hpp>)
 #include <VDAVAData.hpp>
 #endif
 #if __has_include(<VDAGVADataSonoma.hpp>)
 #include <VDAGVADataSonoma.hpp>
+#endif
+#if __has_include(<VDAGVADataSequoia.hpp>)
+#include <VDAGVADataSequoia.hpp>
+#endif
+#if __has_include(<VDAGVADataTahoe.hpp>)
+#include <VDAGVADataTahoe.hpp>
 #endif
 #if __has_include(<VDAGVAData.hpp>)
 #include <VDAGVAData.hpp>
@@ -87,10 +98,9 @@ void NRed::init()
 
     Backlight::singleton().init();
 
-    // Select the user-space VDA table set for the running Darwin generation.  The bridge separately
-    // rejects builds it has no kernel/ABI data for, so an unsupported major version only leaves these
-    // tables unregistered (no-op).
-    if (currentKernelVersion().major() == 23) {
+    this->forceVDA = checkKernelArgument("-NRedForceVDA");
+
+    if (getKernelVersion() == KernelVersion::Sonoma) {
 #if __has_include(<VDAVADataSonoma.hpp>)
         if constexpr (sizeof(VDAVADataSonoma::Patches) / sizeof(VDAVADataSonoma::Patches[0]) > 0) {
             UserPatches::singleton().registerVDAFix(
@@ -103,12 +113,24 @@ void NRed::init()
                 VDAGVADataSonoma::Patches, sizeof(VDAGVADataSonoma::Patches) / sizeof(VDAGVADataSonoma::Patches[0]));
         }
 #endif
-    }
-    else if (currentKernelVersion().major() == 24) {
-#if __has_include(<VDAVAData.hpp>)
-        if constexpr (sizeof(VDAVAData::Patches) / sizeof(VDAVAData::Patches[0]) > 0) {
-            UserPatches::singleton().registerVDAFix(VDAVAData::Patches,
-                                                    sizeof(VDAVAData::Patches) / sizeof(VDAVAData::Patches[0]));
+    } else if (getKernelVersion() >= KernelVersion::Tahoe) {
+#if __has_include(<VDAVADataTahoe.hpp>)
+        if constexpr ((sizeof(VDAVADataTahoe::Patches) / sizeof(VDAVADataTahoe::Patches[0])) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAVADataTahoe::Patches,
+                                                    (sizeof(VDAVADataTahoe::Patches) / sizeof(VDAVADataTahoe::Patches[0])));
+        }
+#endif
+#if __has_include(<VDAGVADataTahoe.hpp>)
+        if constexpr ((sizeof(VDAGVADataTahoe::Patches) / sizeof(VDAGVADataTahoe::Patches[0])) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAGVADataTahoe::Patches,
+                                                    (sizeof(VDAGVADataTahoe::Patches) / sizeof(VDAGVADataTahoe::Patches[0])));
+        }
+#endif
+    } else if (getKernelVersion() >= KernelVersion::Sequoia) {
+#if __has_include(<VDAVADataSequoia.hpp>)
+        if constexpr ((sizeof(VDAVADataSequoia::Patches) / sizeof(VDAVADataSequoia::Patches[0])) > 0) {
+            UserPatches::singleton().registerVDAFix(VDAVADataSequoia::Patches,
+                                                    (sizeof(VDAVADataSequoia::Patches) / sizeof(VDAVADataSequoia::Patches[0])));
         }
 #endif
 #if __has_include(<VDAGVAData.hpp>)
@@ -261,11 +283,22 @@ void NRed::processPatcher(KernelPatcher& patcher)
         auto device = OSDynamicCast(IOPCIDevice, devInfo->videoExternal[i].video);
         if (device == nullptr) { continue; }
 
-        this->externalVideo = true;
+        const auto vendor = WIOKit::readPCIConfigValue(device, WIOKit::kIOPCIConfigVendorID);
+        if (vendor == WIOKit::VendorID::ATIAMD) {
+            DBGLOG("NRed", "Found external AMD video device 0x%04X:0x%04X", vendor,
+                   WIOKit::readPCIConfigValue(device, WIOKit::kIOPCIConfigDeviceID));
+            this->externalVideo = true;
+        } else {
+            DBGLOG("NRed", "Ignoring non-AMD external video device (vendor 0x%04X)", vendor);
+        }
 
         snprintf(name, arrsize(name), "GFX%zu", ii++);
         WIOKit::renameDevice(device, name);
         WIOKit::awaitPublishing(device);
+    }
+
+    if (this->externalVideo && this->forceVDA) {
+        SYSLOG("NRed", "External AMD video device detected, but -NRedForceVDA is set; overriding external video check");
     }
 
     VDA::singleton().processPatcher();

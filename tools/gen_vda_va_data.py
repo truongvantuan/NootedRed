@@ -21,13 +21,17 @@
 #
 # You should have received a copy of the ChefKiss Open Knowledge License
 # along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowledge/raw/branch/master/LICENSE-v1.md.
-"""Generate `NootedRed/VDAVAData.hpp` from the running machine's dyld shared cache.
+"""Generate `NootedRed/VDAVAData*.hpp` from a supported macOS dyld shared cache.
 
 The generated table makes the stock `AMDRadeonVADriver2` user-space driver treat the GFX9
 (VCN 2.x) Renoir iGPU as a VA family 5 (Navi10-class) decoder while still programming GFX9
 engines and the GFX9 address library.
 
-All patch sites are derived from the 15.8.1 image, not copied from any fork data:
+Supported targets are pinned by PROFILES (macOS 15.8.1 and Tahoe 26.7.1), selected by the
+dyld cache UUID; the generator refuses anything else instead of emitting a table that would
+silently never match.
+
+All patch sites are derived from the target image, not copied from any fork data:
 
   * symbols are resolved from the image's own LC_SYMTAB in the dyld shared cache,
   * each patch site is re-found from the function symbol plus a verified instruction offset,
@@ -42,28 +46,56 @@ Read-only: the cache and system files are only opened for reading.
 import argparse
 import hashlib
 import pathlib
+import plistlib
 import re
 import struct
+import subprocess
 import sys
 
-MACOS_VERSION = "15.8.1 (24H32)"
-DRIVER_VERSION = "7.0.25"
-CACHE_DIR = pathlib.Path("/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld")
-CACHE_UUID = "42EC2890-BC40-317E-BB27-45142BFF7F26"
+PROFILES = {
+    ("15.8.1", "24H32"): {
+        "macos_version": "15.8.1 (24H32)",
+        "driver_version": "7.0.25",
+        "cache_uuid": "42EC2890-BC40-317E-BB27-45142BFF7F26",
+        "namespace_suffix": "",
+        "output_name": "VDAVAData.hpp",
+        "evidence_doc": "analysis/vda-1581-va-data.md",
+    },
+    ("26.7.1", "25G241"): {
+        "macos_version": "26.7.1 (25G241)",
+        "driver_version": "7.1.8",
+        "cache_uuid": "31374756-89B4-34E8-A34F-56C5D57216A1",
+        "namespace_suffix": "Tahoe",
+        "output_name": "VDAVADataTahoe.hpp",
+        "evidence_doc": "analysis/vda-2671-va-data.md",
+    },
+}
+DEFAULT_CACHE_DIR = pathlib.Path("/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld")
+LIVE_CACHE_DIRS = frozenset(
+    pathlib.Path(p)
+    for p in (
+        "/System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld",
+        "/System/Cryptexes/OS/System/Library/dyld",
+        "/System/Library/dyld",
+    )
+)
 CACHE_BASE = 0x7FF800000000
 VA_IMAGE_PATH = "/System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/MacOS/AMDRadeonVADriver2"
+VA_INFO_PLIST = pathlib.Path("System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/Info.plist")
+SYSTEM_VERSION_PLIST = pathlib.Path("System/Library/CoreServices/SystemVersion.plist")
 PAGE_SIZE = 0x1000
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUTPUT_PATH = ROOT / "NootedRed" / "VDAVAData.hpp"
 
 # ---------------------------------------------------------------------------------------------------
-# Patch plan.  Everything is derived from the 15.8.1 image; the semantic intent comes from the task,
+# Patch plan.  Everything is derived from the target image; the semantic intent comes from the task,
 # the legacy NootedRed report and the steve12311 fork analysis (no bytes or offsets were copied).
 #
 # `symbols` lists the function symbol each site lives in, together with the instruction offset where
 # `find` starts.  When one `find` covers several functions (identical instruction sequences) each
 # function is listed and `count` in the emitted PagePatch is the number of sites on that page.
+# A spec whose sites span several 4 KiB pages is emitted as one patch record per page; the native
+# backend matches and patches each page independently through `_cs_validate_page`.
 # ---------------------------------------------------------------------------------------------------
 
 PATCHES = [
@@ -178,6 +210,35 @@ PATCHES = [
 
 class CacheError(RuntimeError):
     pass
+
+
+def warn_if_live_patched_cache(cache_dir: pathlib.Path) -> bool:
+    """Detect reading the running system's cache on a `-NRedVDA`/`-NRedAVC` boot.
+
+    The user-space page patcher writes replacement bytes into the dyld cache's
+    file-backed page cache, so reads through that cache can return patched bytes
+    (or flip between stock and patched as pages are evicted and re-validated).
+    Generation for the running system is only trustworthy on a boot without the
+    VDA boot-args, or against a mounted offline volume.
+
+    Returns True when the cache is a live one and the patches are active this
+    boot; callers warn for `--check` but must refuse to generate.
+    """
+    if cache_dir not in LIVE_CACHE_DIRS:
+        return False
+    try:
+        bootargs = subprocess.check_output(["/usr/sbin/sysctl", "-n", "kern.bootargs"], text=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if "-NRedVDA" in bootargs or "-NRedAVC" in bootargs:
+        print(
+            "warning: this boot has the VDA user-space patches active; pages of the live dyld "
+            "cache may read back patched bytes. Regenerate on a boot without -NRedVDA/-NRedAVC "
+            "or against an offline volume if any verification fails unexpectedly.",
+            file=sys.stderr,
+        )
+        return True
+    return False
 
 
 class DyldCache:
@@ -367,55 +428,59 @@ def build_plan(cache: DyldCache, image: MachOImage):
                 )
             sites.append(site)
 
-        page_address = sites[0] & ~(PAGE_SIZE - 1)
-        if any(site & ~(PAGE_SIZE - 1) != page_address for site in sites):
-            raise CacheError(f"{spec['key']}: patch sites span more than one page")
-        page_bytes = cache.read_page(page_address)
-        if page_address not in pages:
-            pages[page_address] = page_bytes
+        # Sites of one spec may span several 4 KiB pages; emit one record per
+        # page so each page keeps its own exact page image, skip and count.
+        sites_by_page: dict[int, list[int]] = {}
+        for site in sites:
+            sites_by_page.setdefault(site & ~(PAGE_SIZE - 1), []).append(site)
 
-        page = page_address
-        page_offset = page - image.base
-        if page_offset % PAGE_SIZE:
-            raise CacheError(f"{spec['key']}: page {page:#x} is not image-page aligned")
-        text_segment = next(segment for segment in image.segments if segment[0] == "__TEXT")
-        text_file_offset = text_segment[3] + page_offset
-        mapped_start, _, mapped_file_offset, _ = cache.mapping_for(page)
-        if mapped_file_offset + (page - mapped_start) != text_file_offset:
-            raise CacheError(
-                f"{spec['key']}: mapping file offset {mapped_file_offset + (page - mapped_start):#x} "
-                f"!= __TEXT file offset {text_file_offset:#x}"
+        for page_address, page_sites in sorted(sites_by_page.items()):
+            page_bytes = cache.read_page(page_address)
+            if page_address not in pages:
+                pages[page_address] = page_bytes
+
+            page = page_address
+            page_offset = page - image.base
+            if page_offset % PAGE_SIZE:
+                raise CacheError(f"{spec['key']}: page {page:#x} is not image-page aligned")
+            text_segment = next(segment for segment in image.segments if segment[0] == "__TEXT")
+            text_file_offset = text_segment[3] + page_offset
+            mapped_start, _, mapped_file_offset, _ = cache.mapping_for(page)
+            if mapped_file_offset + (page - mapped_start) != text_file_offset:
+                raise CacheError(
+                    f"{spec['key']}: mapping file offset {mapped_file_offset + (page - mapped_start):#x} "
+                    f"!= __TEXT file offset {text_file_offset:#x}"
+                )
+
+            matches = [offset for offset in range(0, PAGE_SIZE - len(find) + 1) if page_bytes[offset : offset + len(find)] == find]
+            expected = [site - page for site in page_sites]
+            skip = 0
+            while skip < len(matches) and matches[skip] < expected[0]:
+                skip += 1
+            if matches[skip : skip + len(expected)] != expected:
+                raise CacheError(f"{spec['key']}: expected sites {[hex(x) for x in expected]} not found on page")
+            if len(matches) != skip + len(expected):
+                raise CacheError(
+                    f"{spec['key']}: page has {len(matches)} occurrences of the find, expected {skip + len(expected)}"
+                )
+            if page_bytes.count(find) != len(matches):
+                raise CacheError(f"{spec['key']}: inconsistent occurrence count")
+
+            entries.append(
+                {
+                    "key": spec["key"],
+                    "comment": spec["comment"],
+                    "rationale": spec["rationale"],
+                    "page_address": page_address,
+                    "page_offset": page_offset,
+                    "sites": page_sites,
+                    "find": find,
+                    "replace": replace,
+                    "skip": skip,
+                    "count": len(expected),
+                    "matches": matches,
+                }
             )
-
-        matches = [offset for offset in range(0, PAGE_SIZE - len(find) + 1) if page_bytes[offset : offset + len(find)] == find]
-        expected = [site - page for site in sites]
-        skip = 0
-        while skip < len(matches) and matches[skip] < expected[0]:
-            skip += 1
-        if matches[skip : skip + len(expected)] != expected:
-            raise CacheError(f"{spec['key']}: expected sites {[hex(x) for x in expected]} not found on page")
-        if len(matches) != skip + len(expected):
-            raise CacheError(
-                f"{spec['key']}: page has {len(matches)} occurrences of the find, expected {skip + len(expected)}"
-            )
-        if page_bytes.count(find) != len(matches):
-            raise CacheError(f"{spec['key']}: inconsistent occurrence count")
-
-        entries.append(
-            {
-                "key": spec["key"],
-                "comment": spec["comment"],
-                "rationale": spec["rationale"],
-                "page_address": page_address,
-                "page_offset": page_offset,
-                "sites": sites,
-                "find": find,
-                "replace": replace,
-                "skip": skip,
-                "count": len(expected),
-                "matches": matches,
-            }
-        )
 
     ordered_pages = sorted(pages)
     for entry in entries:
@@ -432,10 +497,14 @@ def _array(values: bytes, per_line: int = 16) -> str:
     return "\n".join(lines)
 
 
-def render_header(cache: DyldCache, image: MachOImage, pages, page_images, entries) -> str:
+def render_header(cache: DyldCache, image: MachOImage, pages, page_images, entries, profile: dict) -> str:
     text = image.text_bytes()
     text_hash = hashlib.sha256(text).hexdigest()
     image_uuid = image.uuid.hex().upper() if image.uuid else "UNKNOWN"
+    macos_version = profile["macos_version"]
+    driver_version = profile["driver_version"]
+    cache_uuid = profile["cache_uuid"]
+    namespace = f"VDAVAData{profile['namespace_suffix']}"
     if image.build_version:
         platform, minos, sdk, _, _ = image.build_version
     else:
@@ -472,8 +541,8 @@ def render_header(cache: DyldCache, image: MachOImage, pages, page_images, entri
 
     return f"""// Generated by tools/gen_vda_va_data.py -- do not edit by hand.
 //
-// Source: macOS {MACOS_VERSION}, AMDRadeonVADriver2 {DRIVER_VERSION}
-//   dyld cache UUID {CACHE_UUID}
+// Source: macOS {macos_version}, AMDRadeonVADriver2 {driver_version}
+//   dyld cache UUID {cache_uuid}
 //   dyld cache base 0x{CACHE_BASE:X}
 //   image path {VA_IMAGE_PATH}
 //   image base 0x{image.base:X}, image UUID {image_uuid}, LC_BUILD_VERSION platform {platform} minos {minos:#x} sdk {sdk:#x}
@@ -514,15 +583,15 @@ def render_header(cache: DyldCache, image: MachOImage, pages, page_images, entri
 #include <libkern/OSTypes.h>
 
 // User-space patches for `/System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/MacOS/AMDRadeonVADriver2`
-// (macOS {MACOS_VERSION}).  See analysis/vda-1581-va-data.md for the evidence behind every site.
-namespace VDAVAData
+// (macOS {macos_version}).  See {profile['evidence_doc']} for the evidence behind every site.
+namespace {namespace}
 {{
     // Identifies the exact inputs this data was generated from; the integration must refuse a cache
     // or driver build that does not match.
     inline constexpr char SourceDescription[] =
-        "macOS {MACOS_VERSION}; AMDRadeonVADriver2 {DRIVER_VERSION}; dyld cache {CACHE_UUID} base 0x{CACHE_BASE:X}; "
+        "macOS {macos_version}; AMDRadeonVADriver2 {driver_version}; dyld cache {cache_uuid} base 0x{CACHE_BASE:X}; "
         "image base 0x{image.base:X}";
-    inline constexpr char CacheUUID[] = "{CACHE_UUID}";
+    inline constexpr char CacheUUID[] = "{cache_uuid}";
     inline constexpr char TextSHA256[] = "{text_hash}";
     inline constexpr UInt64 CacheBase = 0x{CACHE_BASE:X}ULL;
     inline constexpr UInt64 ImageBase = 0x{image.base:X}ULL;
@@ -535,7 +604,7 @@ namespace VDAVAData
 {chr(10).join(patch_lines)}
     }};
     inline constexpr size_t PatchCount = sizeof(Patches) / sizeof(Patches[0]);
-}}    // namespace VDAVAData
+}}    // namespace {namespace}
 """
 
 
@@ -569,7 +638,7 @@ def parse_header(text: str):
     return arrays, records
 
 
-def verify_header(text: str, cache: DyldCache, image: MachOImage, pages, entries) -> list[str]:
+def verify_header(text: str, cache: DyldCache, image: MachOImage, pages, entries, profile: dict) -> list[str]:
     """Independently verify the emitted table against the live cache."""
     errors = []
     arrays, records = parse_header(text)
@@ -577,7 +646,7 @@ def verify_header(text: str, cache: DyldCache, image: MachOImage, pages, entries
     expected_pages = {f"Page{index}" for index in range(len(pages))}
     if page_names != expected_pages:
         errors.append(f"header page images {sorted(page_names)} != expected {sorted(expected_pages)}")
-    if f'CacheUUID[] = "{CACHE_UUID}"' not in text:
+    if f'CacheUUID[] = "{profile["cache_uuid"]}"' not in text:
         errors.append("header CacheUUID constant does not match the generated value")
     if f"ImageBase = 0x{image.base:X}ULL" not in text:
         errors.append("header ImageBase constant does not match the generated value")
@@ -627,6 +696,12 @@ def committed_stock_pages(cache: DyldCache, image: MachOImage, output_path: path
     images; use them as the generation source after checking that the live page is exactly the stock
     page with a subset of that header's replacements applied.  This keeps `--check` working while
     `-NRedVDA` is active and still rejects any unrelated system update.
+
+    DANGER: never call this on a generation path (non-`--check`) against a live patched system.  It
+    trusts the committed header's page images as stock; if that header was itself generated from a
+    polluted page cache, the pollution is re-committed as "stock" and the verification loop passes
+    while the kext silently skips every page.  Generation from a live patched cache is refused in
+    main() unless `--force-live-cache` is given.
     """
     if not output_path.exists():
         return {}
@@ -674,7 +749,7 @@ def committed_stock_pages(cache: DyldCache, image: MachOImage, output_path: path
     return stock
 
 
-def derive(cache: DyldCache, output_path: pathlib.Path = OUTPUT_PATH):
+def derive(cache: DyldCache, output_path: pathlib.Path):
     image = MachOImage(cache, VA_IMAGE_PATH)
     stock = committed_stock_pages(cache, image, output_path)
     if not stock:
@@ -721,10 +796,36 @@ def derive(cache: DyldCache, output_path: pathlib.Path = OUTPUT_PATH):
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify the committed header against the live cache")
-    parser.add_argument("--output", type=pathlib.Path, default=OUTPUT_PATH, help="header path to write/check")
+    parser.add_argument("--output", type=pathlib.Path, default=None, help="header path to write/check")
+    parser.add_argument(
+        "--cache-dir",
+        type=pathlib.Path,
+        default=DEFAULT_CACHE_DIR,
+        help="dyld shared cache directory of the target system",
+    )
+    parser.add_argument(
+        "--root",
+        type=pathlib.Path,
+        default=pathlib.Path("/"),
+        help="target system root for version plists (e.g. a mounted Tahoe volume)",
+    )
+    parser.add_argument(
+        "--force-live-cache",
+        action="store_true",
+        help="allow generating from the live cache on a -NRedVDA/-NRedAVC boot (page cache may be polluted)",
+    )
     args = parser.parse_args(argv)
 
-    with DyldCache(CACHE_DIR) as cache:
+    live_patched = warn_if_live_patched_cache(args.cache_dir)
+    if live_patched and not args.check and not args.force_live_cache:
+        print(
+            "error: refusing to generate from the live dyld cache while the VDA user-space patches are "
+            "active; the page cache may return patched bytes. Boot without -NRedVDA/-NRedAVC, point "
+            "--cache-dir at an offline volume, or pass --force-live-cache to override.",
+            file=sys.stderr,
+        )
+        return 1
+    with DyldCache(args.cache_dir) as cache:
         uuid = "-".join(
             [
                 cache.uuid[0:4].hex().upper(),
@@ -734,23 +835,44 @@ def main(argv: list[str]) -> int:
                 cache.uuid[10:16].hex().upper(),
             ]
         )
-        if uuid != CACHE_UUID:
-            raise CacheError(f"dyld cache UUID {uuid} does not match the generated data ({CACHE_UUID})")
+        profile = next((candidate for candidate in PROFILES.values() if candidate["cache_uuid"] == uuid), None)
+        if profile is None:
+            supported = ", ".join(candidate["cache_uuid"] for candidate in PROFILES.values())
+            raise CacheError(f"dyld cache UUID {uuid} matches no supported profile ({supported})")
         if cache.base != CACHE_BASE:
             raise CacheError(f"dyld cache base {cache.base:#x} does not match {CACHE_BASE:#x}")
 
-        image, page_addresses, page_images, entries = derive(cache, args.output)
-        header = render_header(cache, image, page_addresses, page_images, entries)
-        errors = verify_header(header, cache, image, page_addresses, entries)
+        # Cross-check the target root's version plists when they are readable.
+        version_path = args.root / SYSTEM_VERSION_PLIST
+        if version_path.is_file():
+            with version_path.open("rb") as handle:
+                system_version = plistlib.load(handle)
+            key = (str(system_version.get("ProductVersion", "")), str(system_version.get("ProductBuildVersion", "")))
+            if PROFILES.get(key) is not profile:
+                raise CacheError(f"target root is macOS {key[0]} ({key[1]}), which does not match cache UUID {uuid}")
+        driver_plist_path = args.root / VA_INFO_PLIST
+        if driver_plist_path.is_file():
+            with driver_plist_path.open("rb") as handle:
+                driver_info = plistlib.load(handle)
+            driver_version = str(driver_info.get("CFBundleShortVersionString", ""))
+            if driver_version != profile["driver_version"]:
+                raise CacheError(
+                    f"AMDRadeonVADriver2 version {driver_version} does not match profile {profile['driver_version']}"
+                )
+
+        output = args.output or ROOT / "NootedRed" / profile["output_name"]
+        image, page_addresses, page_images, entries = derive(cache, output)
+        header = render_header(cache, image, page_addresses, page_images, entries, profile)
+        errors = verify_header(header, cache, image, page_addresses, entries, profile)
         if errors:
             for error in errors:
                 print(f"error: {error}", file=sys.stderr)
             return 1
 
         sites = sum(entry["count"] for entry in entries)
-        print(f"cache  : {CACHE_UUID} base {cache.base:#x}")
+        print(f"cache  : {profile['cache_uuid']} base {cache.base:#x}")
         print(f"image  : {VA_IMAGE_PATH}")
-        print(f"         {DRIVER_VERSION}, image base {image.base:#x}, __text {len(image.text_bytes()):#x} bytes")
+        print(f"         {profile['driver_version']}, image base {image.base:#x}, __text {len(image.text_bytes()):#x} bytes")
         print(f"         __text SHA-256 {hashlib.sha256(image.text_bytes()).hexdigest()}")
         print(f"tables : {len(page_images)} page image(s), {len(entries)} patch record(s), {sites} site(s)")
         for entry in entries:
@@ -761,23 +883,23 @@ def main(argv: list[str]) -> int:
             )
 
         if args.check:
-            if not args.output.exists():
-                print(f"error: {args.output} does not exist", file=sys.stderr)
+            if not output.exists():
+                print(f"error: {output} does not exist", file=sys.stderr)
                 return 1
-            committed = args.output.read_text()
-            committed_errors = verify_header(committed, cache, image, page_addresses, entries)
+            committed = output.read_text()
+            committed_errors = verify_header(committed, cache, image, page_addresses, entries, profile)
             if committed_errors:
                 for error in committed_errors:
                     print(f"error: {error}", file=sys.stderr)
                 return 1
             if committed == header:
-                print(f"check  : {args.output} matches the live cache")
+                print(f"check  : {output} matches the live cache")
             else:
-                print(f"check  : {args.output} is semantically current (only formatting/comments differ)")
+                print(f"check  : {output} is semantically current (only formatting/comments differ)")
             return 0
 
-    args.output.write_text(header)
-    print(f"wrote  : {args.output} ({len(header)} bytes)")
+    output.write_text(header)
+    print(f"wrote  : {output} ({len(header)} bytes)")
     return 0
 
 

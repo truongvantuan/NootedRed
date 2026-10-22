@@ -20,12 +20,14 @@ DARWIN="$(uname -r)"
 DARWIN_MAJOR="$(echo "${DARWIN}" | cut -d. -f1)"
 DARWIN_MINOR="$(echo "${DARWIN}" | cut -d. -f2)"
 echo "macOS ${PRODUCT} (${BUILD}), Darwin ${DARWIN}"
-if [[ "${PRODUCT}" == "15.8.1" && "${BUILD}" == "24H32" && "${DARWIN_MAJOR}" == "24" && "${DARWIN_MINOR}" == "6" ]]; then
-    pass "OS/build matches the generated 15.8.1 24H32 (Darwin 24.6) data"
-elif [[ "${PRODUCT}" == "14.8.9" && "${BUILD}" == "23J631" && "${DARWIN_MAJOR}" == "23" && "${DARWIN_MINOR}" == "6" ]]; then
-    pass "OS/build matches the generated 14.8.9 23J631 (Darwin 23.6) data"
+if [[ "${DARWIN_MAJOR}" == "24" && "${DARWIN_MINOR}" == "6" ]]; then
+    pass "OS/build matches macOS 15.x (Darwin 24.6) Sequoia series"
+elif [[ "${DARWIN_MAJOR}" == "23" && "${DARWIN_MINOR}" == "6" ]]; then
+    pass "OS/build matches macOS 14.x (Darwin 23.6) Sonoma series (${BUILD})"
+elif [[ "${DARWIN_MAJOR}" == "25" && "${DARWIN_MINOR}" == "6" ]]; then
+    pass "OS/build matches macOS 26.x (Darwin 25.6) Tahoe series (${BUILD})"
 else
-    fail "OS/build does not match supported VDA data (14.8.9 / 15.8.1)"
+    fail "OS/build does not match supported VDA data (macOS 14/15/26 Darwin 23.6/24.6/25.6)"
 fi
 
 # --- iGPU identity ---

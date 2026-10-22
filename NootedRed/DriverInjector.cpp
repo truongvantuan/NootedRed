@@ -101,11 +101,17 @@ bool DriverInjector::wrapAddDrivers(void* const self, OSArray* const array, cons
                     if (pDict != nullptr) {
                         pDict->removeObject("IOGVAHEVCDecode");
                         pDict->removeObject("IOGVAHEVCDecodeCapabilities");
-                        pDict->removeObject("IOGVAHEVCEncode");
-                        pDict->removeObject("IOGVAHEVCEncodeCapabilities");
+                        if (!VDA::singleton().isHEVCEncodeAllowed()) {
+                            pDict->removeObject("IOGVAHEVCEncode");
+                            pDict->removeObject("IOGVAHEVCEncodeCapabilities");
+                        }
                     }
                 }
-                DBGLOG("DriverInjector", "-NRedAVC active: stripped HEVC decode/encode capabilities from %s", driver.identifier);
+                if (VDA::singleton().isHEVCEncodeAllowed()) {
+                    DBGLOG("DriverInjector", "-NRedAVCEncode active: stripped HEVC decode, preserved HEVC encode for %s", driver.identifier);
+                } else {
+                    DBGLOG("DriverInjector", "-NRedAVC active: stripped HEVC decode/encode capabilities from %s", driver.identifier);
+                }
             }
 
             array->merge(driver.personalities);

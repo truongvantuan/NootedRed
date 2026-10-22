@@ -21,7 +21,11 @@
 # You should have received a copy of the ChefKiss Open Knowledge License
 # along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowledge/raw/branch/master/LICENSE-v1.md.
 
-"""Generate NootedRed/VDAGVAData.hpp from the live macOS 15.8.1 dyld shared cache.
+"""Generate NootedRed/VDAGVAData*.hpp from a supported macOS dyld shared cache.
+
+Supported targets are pinned by PROFILES (macOS 15.8.1 and Tahoe 26.7.1); the
+generator refuses anything else instead of emitting a table that would silently
+never match.
 
 The header carries the AppleGVA user-space patch that makes VideoToolbox pick the
 AMD VCN2 decoder on an AMD-only Hackintosh.  On 15.8.1 the decoder-selection
@@ -52,6 +56,9 @@ cache and the emitted header and fail loudly on any mismatch.
 Usage:
     python3 tools/gen_vda_gva_data.py
     python3 tools/gen_vda_gva_data.py --check
+    python3 tools/gen_vda_gva_data.py --root /Volumes/Tahoe \
+        --cache-dir /Volumes/Tahoe/System/Cryptexes/OS/System/Library/dyld \
+        --header NootedRed/VDAGVADataTahoe.hpp
 """
 
 from __future__ import annotations
@@ -61,6 +68,7 @@ import hashlib
 import plistlib
 import re
 import struct
+import subprocess
 import sys
 from bisect import bisect_right
 from pathlib import Path
@@ -72,19 +80,35 @@ CACHE_CANDIDATES = (
     Path("/System/Cryptexes/OS/System/Library/dyld"),
     Path("/System/Library/dyld"),
 )
-SYSTEM_VERSION_PLIST = Path("/System/Library/CoreServices/SystemVersion.plist")
-GVA_INFO_PLIST = Path("/System/Library/PrivateFrameworks/AppleGVA.framework/Versions/A/Resources/Info.plist")
+LIVE_CACHE_DIRS = frozenset(CACHE_CANDIDATES)
+SYSTEM_VERSION_PLIST = Path("System/Library/CoreServices/SystemVersion.plist")
+GVA_INFO_PLIST = Path("System/Library/PrivateFrameworks/AppleGVA.framework/Versions/A/Resources/Info.plist")
 
 # This data is specific to one OS build and one AppleGVA build.  The generator
 # refuses to run against anything else instead of emitting a table that would
-# silently never match.
-EXPECTED_PRODUCT_VERSION = "15.8.1"
-EXPECTED_BUILD_VERSION = "24H32"
-EXPECTED_CACHE_UUID = "42EC2890BC40317EBB2745142BFF7F26"
+# silently never match.  Each profile pins the exact OS build, dyld cache UUID
+# and AppleGVA image UUID it supports, plus the branch form the selection
+# function was compiled into.
+PROFILES = {
+    ("15.8.1", "24H32"): {
+        "cache_uuid": "42EC2890BC40317EBB2745142BFF7F26",
+        "gva_version": "113.56",
+        "gva_image_uuid": "53DD765D087D322EA410BD22D586C08C",
+        "branch_form": "sequoia",
+        "namespace_suffix": "",
+        "evidence_doc": "analysis/vda-1581-gva-data.md",
+    },
+    ("26.7.1", "25G241"): {
+        "cache_uuid": "3137475689B434E8A34F56C5D57216A1",
+        "gva_version": "113.56",
+        "gva_image_uuid": "CA5414F369373C059EA2D82B35AFD4F0",
+        "branch_form": "tahoe",
+        "namespace_suffix": "Tahoe",
+        "evidence_doc": "analysis/vda-2671-gva-data.md",
+    },
+}
 EXPECTED_CACHE_BASE = 0x7FF800000000
 GVA_IMAGE_PATH = "/System/Library/PrivateFrameworks/AppleGVA.framework/Versions/A/AppleGVA"
-EXPECTED_GVA_VERSION = "113.56"
-EXPECTED_GVA_IMAGE_UUID = "53DD765D087D322EA410BD22D586C08C"
 
 PAGE_SIZE = 0x1000
 MH_MAGIC_64 = 0xFEEDFACF
@@ -116,9 +140,47 @@ INTEL_SLOT_OFFSET = -0x158
 AMD_TAIL = bytes.fromhex("4C8B7B08488B43104939C7")
 AMD_ARRAY_OFFSET = -0x130
 
+# Tahoe (26.7.1) branch form: the same selection logic with the Intel slot
+# holder reallocated from %r15 to %r12.  `mov -0x158(%rbp),%r12;
+# test %r12,%r12; je <invalid-boardId empty-return>`.
+BRANCH_PROLOGUE_TAHOE = bytes.fromhex("4D85E40F84")
+INTEL_SLOT_LOAD_TAHOE = bytes.fromhex("4C8BA5A8FEFFFF")
+# Tahoe AMD insertion: the force-AMD override block ends with
+# `lea -0x130(%rbp),%rsi; mov %rbx,%rdi; call <push_back>; jmp <epilogue>`.
+AMD_ARRAY_LEA_TAHOE = bytes.fromhex("488DB5D0FEFFFF")
+
 
 class GeneratorError(RuntimeError):
     """Raised when the live cache does not match the data this generator supports."""
+
+
+def warn_if_live_patched_cache(cache_dir: Path) -> bool:
+    """Detect reading the running system's cache on a `-NRedVDA`/`-NRedAVC` boot.
+
+    The user-space page patcher writes replacement bytes into the dyld cache's
+    file-backed page cache, so reads through that cache can return patched bytes
+    (or flip between stock and patched as pages are evicted and re-validated).
+    Generation for the running system is only trustworthy on a boot without the
+    VDA boot-args, or against a mounted offline volume.
+
+    Returns True when the cache is a live one and the patches are active this
+    boot; callers warn for `--check` but must refuse to generate.
+    """
+    if cache_dir not in LIVE_CACHE_DIRS:
+        return False
+    try:
+        bootargs = subprocess.check_output(["/usr/sbin/sysctl", "-n", "kern.bootargs"], text=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if "-NRedVDA" in bootargs or "-NRedAVC" in bootargs:
+        print(
+            "warning: this boot has the VDA user-space patches active; pages of the live dyld "
+            "cache may read back patched bytes. Regenerate on a boot without -NRedVDA/-NRedAVC "
+            "or against an offline volume if any verification fails unexpectedly.",
+            file=sys.stderr,
+        )
+        return True
+    return False
 
 
 class SharedCache:
@@ -342,43 +404,50 @@ def u64(data: bytes, offset: int) -> int:
     return struct.unpack_from("<Q", data, offset)[0]
 
 
-def verify_platform() -> dict:
+def verify_platform(root: Path) -> dict:
     try:
-        with SYSTEM_VERSION_PLIST.open("rb") as handle:
+        with (root / SYSTEM_VERSION_PLIST).open("rb") as handle:
             version = plistlib.load(handle)
     except OSError as error:
-        raise GeneratorError(f"cannot read {SYSTEM_VERSION_PLIST}: {error}") from error
+        raise GeneratorError(f"cannot read {root / SYSTEM_VERSION_PLIST}: {error}") from error
     product = str(version.get("ProductVersion", ""))
     build = str(version.get("ProductBuildVersion", ""))
-    if product != EXPECTED_PRODUCT_VERSION or build != EXPECTED_BUILD_VERSION:
-        raise GeneratorError(
-            f"unsupported OS {product} ({build}); this data is generated for "
-            f"{EXPECTED_PRODUCT_VERSION} ({EXPECTED_BUILD_VERSION})"
-        )
+    profile = PROFILES.get((product, build))
+    if profile is None:
+        supported = ", ".join(f"{product} ({build})" for product, build in PROFILES)
+        raise GeneratorError(f"unsupported OS {product} ({build}); this generator supports: {supported}")
     try:
-        with GVA_INFO_PLIST.open("rb") as handle:
+        with (root / GVA_INFO_PLIST).open("rb") as handle:
             info = plistlib.load(handle)
         gva_version = str(info.get("CFBundleShortVersionString", ""))
     except OSError as error:
-        raise GeneratorError(f"cannot read {GVA_INFO_PLIST}: {error}") from error
-    if gva_version != EXPECTED_GVA_VERSION:
-        raise GeneratorError(f"unsupported AppleGVA version {gva_version}; expected {EXPECTED_GVA_VERSION}")
-    return {"product": product, "build": build, "gva_version": gva_version}
+        raise GeneratorError(f"cannot read {root / GVA_INFO_PLIST}: {error}") from error
+    if gva_version != profile["gva_version"]:
+        raise GeneratorError(
+            f"unsupported AppleGVA version {gva_version}; expected {profile['gva_version']}"
+        )
+    return {"product": product, "build": build, "gva_version": gva_version, "profile": profile}
 
 
 
-def committed_stock_page(cache: SharedCache):
+def committed_stock_page(cache: SharedCache, header_path: Path = DEFAULT_HEADER):
     """Recover the stock AppleGVA page if the running VDA backend patched it in the page cache.
 
     The native page backend writes matched pages after code-signing validation.  Those writes land in the
     dyld shared cache's file-backed page cache, so a normal cache read returns the patched bytes until reboot.
     The committed header carries the stock page image; accept it only when the live page is exactly that
     image with this header's single replacement applied.
+
+    DANGER: never call this on a generation path (non-`--check`) against a live patched system.  It trusts
+    the committed header's page image as stock; if that header was itself generated from a polluted page
+    cache, the pollution is re-committed as "stock" and the verification loop passes while the kext silently
+    skips the page.  Generation from a live patched cache is refused in main() unless `--force-live-cache`
+    is given.
     """
-    if not DEFAULT_HEADER.exists():
+    if not header_path.exists():
         return None, None
 
-    text = DEFAULT_HEADER.read_text()
+    text = header_path.read_text()
     site_match = re.search(r"\bat 0x([0-9A-Fa-f]+)", text)
     page_match = re.search(r"source page: 0x([0-9A-Fa-f]+)", text)
     if not site_match or not page_match:
@@ -415,11 +484,177 @@ def committed_stock_page(cache: SharedCache):
     return stock, page_address
 
 
-def derive(cache_dir: Path) -> dict:
-    version = verify_platform()
+def find_all(haystack: bytes, needle: bytes) -> list[int]:
+    matches = []
+    cursor = 0
+    while True:
+        offset = haystack.find(needle, cursor)
+        if offset < 0:
+            break
+        matches.append(offset)
+        cursor = offset + 1
+    return matches
+
+
+def derive_branch_sequoia(cache: SharedCache, code: bytes, function_start: int, function_end: int) -> dict:
+    """Derive the patch from the 15.8.1 branch form (`test %r15,%r15; je`)."""
+    branch_matches = find_all(code, BRANCH_PROLOGUE)
+    if len(branch_matches) != 1:
+        raise GeneratorError(
+            f"expected one 'test r15,r15; je' branch in the selection function, found {len(branch_matches)}"
+        )
+    branch_offset = branch_matches[0]
+    site_offset = branch_offset + len(BRANCH_PROLOGUE) - 2  # start of the `je`
+    site = function_start + site_offset
+    original_displacement = i32(code, site_offset + 2)
+    original_target = site + 6 + original_displacement
+    if not (function_start < original_target < function_end):
+        raise GeneratorError("the original branch leaves the selection function")
+
+    # The fall-through inserts the single accelerator in the -0x158 slot and
+    # jumps to the same empty-return target as the conditional branch.
+    fallthrough = cache.read(site + 6, 20)
+    if fallthrough[0:3] != INTEL_SLOT_LEA or i32(fallthrough, 3) != INTEL_SLOT_OFFSET:
+        raise GeneratorError("the branch fall-through does not load the -0x158 accelerator slot")
+    if fallthrough[7:10] != bytes.fromhex("4889DF") or fallthrough[10] != 0xE8 or fallthrough[15] != 0xE9:
+        raise GeneratorError("unexpected fall-through instructions after the selection branch")
+    fallthrough_jump = site + 21 + 5 + i32(fallthrough, 16)
+    if fallthrough_jump != original_target:
+        raise GeneratorError("the selection branch and the Intel insert path do not share a target")
+
+    # The AMD insertion tail is reached by the `gvaForceAMD*` overrides.  It
+    # pushes the first accelerator of the -0x130 AMD array returned by the same
+    # function and then returns the list.
+    tail_matches = find_all(code, AMD_TAIL)
+    if len(tail_matches) != 1:
+        raise GeneratorError(f"expected one AMD insertion tail, found {len(tail_matches)}")
+    tail = function_start + tail_matches[0]
+    if tail <= site + 6:
+        raise GeneratorError("the AMD insertion tail is not after the selection branch")
+    tail_bytes = cache.read(tail, 27)
+    if (
+        tail_bytes[0 : len(AMD_TAIL)] != AMD_TAIL
+        or tail_bytes[11:13] != bytes.fromhex("0F83")
+        or tail_bytes[17:20] != bytes.fromhex("488B85")
+        or i32(tail_bytes, 20) != AMD_ARRAY_OFFSET
+        or tail_bytes[24:27] != bytes.fromhex("498907")
+    ):
+        raise GeneratorError("the AMD insertion tail does not match the expected code pattern")
+    replacement_displacement = tail - (site + 6)
+    if not (0 < replacement_displacement < 0x7FFFFFFF):
+        raise GeneratorError("the derived replacement branch displacement is out of range")
+
+    return {
+        "site": site,
+        "original_displacement": original_displacement,
+        "original_target": original_target,
+        "tail": tail,
+        "replacement_displacement": replacement_displacement,
+    }
+
+
+def derive_branch_tahoe(
+    cache: SharedCache,
+    code: bytes,
+    function_start: int,
+    function_end: int,
+    anchor_info: dict,
+) -> dict:
+    """Derive the patch from the Tahoe 26.7.1 branch form (`test %r12,%r12; je`).
+
+    Same selection semantics with the Intel slot holder reallocated to %r12.
+    The `je` target is the block that logs "invalid boardId" and jumps to the
+    shared epilogue (the "no Intel accelerator" empty return); the replacement
+    target is the force-AMD override block's own insertion sequence
+    (`lea -0x130(%rbp),%rsi; mov %rbx,%rdi; call <push_back>; jmp <epilogue>`).
+    Both blocks are verified to share the same epilogue, and the epilogue is
+    verified to be the function's stack-canary return.
+    """
+    branch_matches = find_all(code, BRANCH_PROLOGUE_TAHOE)
+    if len(branch_matches) != 1:
+        raise GeneratorError(
+            f"expected one 'test r12,r12; je' branch in the selection function, found {len(branch_matches)}"
+        )
+    branch_offset = branch_matches[0]
+    # The Intel slot load must immediately precede the test.
+    if code[branch_offset - len(INTEL_SLOT_LOAD_TAHOE) : branch_offset] != INTEL_SLOT_LOAD_TAHOE:
+        raise GeneratorError("the Tahoe branch is not preceded by the -0x158 Intel slot load")
+    site_offset = branch_offset + len(BRANCH_PROLOGUE_TAHOE) - 2  # start of the `je`
+    site = function_start + site_offset
+    original_displacement = i32(code, site_offset + 2)
+    original_target = site + 6 + original_displacement
+    if not (function_start < original_target < function_end):
+        raise GeneratorError("the original branch leaves the selection function")
+
+    # The fall-through starts the board-id classification of the Intel
+    # accelerator: `lea <board-id string>(%rip),%rsi; mov %r12,%rdi; call`.
+    fallthrough = cache.read(site + 6, 15)
+    if fallthrough[0:3] != bytes.fromhex("488D35") or fallthrough[7:10] != bytes.fromhex("4C89E7"):
+        raise GeneratorError("unexpected fall-through instructions after the Tahoe selection branch")
+    if fallthrough[10] != 0xE8:
+        raise GeneratorError("the Tahoe fall-through does not call the board-id check")
+
+    # The `je` target must be the "invalid boardId" log + empty return block:
+    # `lea <invalid-boardId string>(%rip),%rsi; mov $0x1b,%edi; xor %eax,%eax;
+    # call <log>; jmp <epilogue>`.
+    invalid_board = anchor_info[ANCHOR_STRINGS[1]]
+    block = cache.read(original_target, 24)
+    if block[0:3] != bytes.fromhex("488D35"):
+        raise GeneratorError("the Tahoe branch target does not load a log string")
+    if original_target + 7 + i32(block, 3) != invalid_board["string_address"]:
+        raise GeneratorError("the Tahoe branch target does not log 'invalid boardId'")
+    if block[7:12] != bytes.fromhex("BF1B000000") or block[12:14] != bytes.fromhex("31C0"):
+        raise GeneratorError("unexpected instructions in the Tahoe branch target block")
+    if block[14] != 0xE8 or block[19] != 0xE9:
+        raise GeneratorError("the Tahoe branch target does not end in a log call and a jump")
+    epilogue = original_target + 24 + i32(block, 20)
+    if not (function_start < epilogue < function_end):
+        raise GeneratorError("the Tahoe empty-return jump leaves the selection function")
+    if cache.read(epilogue, 3) != bytes.fromhex("488B05"):
+        raise GeneratorError("the Tahoe empty-return target is not the stack-canary epilogue")
+
+    # The replacement target is the AMD array insertion inside the block that
+    # logs "force AMD for flow_id": the first `lea -0x130(%rbp),%rsi` after the
+    # anchor reference, followed by `mov %rbx,%rdi; call <push_back>` and a
+    # jump to the same epilogue.
+    force_amd = anchor_info[ANCHOR_STRINGS[2]]
+    tail_offset = code.find(AMD_ARRAY_LEA_TAHOE, force_amd["reference"] - function_start)
+    if tail_offset < 0:
+        raise GeneratorError("no AMD array insertion found after the force-AMD log call")
+    tail = function_start + tail_offset
+    if tail <= site + 6:
+        raise GeneratorError("the AMD insertion tail is not after the selection branch")
+    tail_bytes = cache.read(tail, 20)
+    if tail_bytes[7:10] != bytes.fromhex("4889DF") or tail_bytes[10] != 0xE8 or tail_bytes[15] != 0xE9:
+        raise GeneratorError("the Tahoe AMD insertion tail does not match the expected code pattern")
+    tail_jump = tail + 20 + i32(tail_bytes, 16)
+    if tail_jump != epilogue:
+        raise GeneratorError("the Tahoe AMD insertion tail and the branch target do not share the epilogue")
+    replacement_displacement = tail - (site + 6)
+    if not (0 < replacement_displacement < 0x7FFFFFFF):
+        raise GeneratorError("the derived replacement branch displacement is out of range")
+
+    return {
+        "site": site,
+        "original_displacement": original_displacement,
+        "original_target": original_target,
+        "tail": tail,
+        "replacement_displacement": replacement_displacement,
+    }
+
+
+def default_header_path(profile: dict) -> Path:
+    return REPO_ROOT / "NootedRed" / f"VDAGVAData{profile['namespace_suffix']}.hpp"
+
+
+def derive(cache_dir: Path, root: Path, header_path: Path | None = None) -> dict:
+    version = verify_platform(root)
+    profile = version["profile"]
+    if header_path is None:
+        header_path = default_header_path(profile)
     cache = SharedCache(cache_dir)
     try:
-        stock_page, stock_page_address = committed_stock_page(cache)
+        stock_page, stock_page_address = committed_stock_page(cache, header_path)
         if stock_page is not None:
             original_read = cache.read
 
@@ -432,18 +667,18 @@ def derive(cache_dir: Path) -> dict:
                 return bytes(data)
 
             cache.read = read_with_stock
-        if cache.uuid.hex().upper() != EXPECTED_CACHE_UUID:
+        if cache.uuid.hex().upper() != profile["cache_uuid"]:
             raise GeneratorError(
-                f"unexpected dyld cache UUID {cache.uuid.hex().upper()}; expected {EXPECTED_CACHE_UUID}"
+                f"unexpected dyld cache UUID {cache.uuid.hex().upper()}; expected {profile['cache_uuid']}"
             )
         if cache.base != EXPECTED_CACHE_BASE:
             raise GeneratorError(f"unexpected dyld cache base {cache.base:#x}; expected {EXPECTED_CACHE_BASE:#x}")
 
         image_address = cache.image_address(GVA_IMAGE_PATH)
         macho = cache.parse_macho(image_address)
-        if macho["uuid"].hex().upper() != EXPECTED_GVA_IMAGE_UUID:
+        if macho["uuid"].hex().upper() != profile["gva_image_uuid"]:
             raise GeneratorError(
-                f"unexpected AppleGVA image UUID {macho['uuid'].hex().upper()}; expected {EXPECTED_GVA_IMAGE_UUID}"
+                f"unexpected AppleGVA image UUID {macho['uuid'].hex().upper()}; expected {profile['gva_image_uuid']}"
             )
         segments = macho["segments"]
         sections = macho["sections"]
@@ -458,6 +693,7 @@ def derive(cache_dir: Path) -> dict:
 
         anchor_functions: set[tuple[int, int]] = set()
         anchor_evidence = []
+        anchor_info: dict[bytes, dict] = {}
         for anchor in ANCHOR_STRINGS:
             string_address = find_string_start(cstring, cstring_address, anchor)
             references = find_lea_references(text, text_address, string_address)
@@ -474,71 +710,22 @@ def derive(cache_dir: Path) -> dict:
                 {"string": anchor.decode("utf-8", "replace").strip(), "string_address": string_address,
                  "reference": reference}
             )
+            anchor_info[anchor] = {"string_address": string_address, "reference": reference}
         if len(anchor_functions) != 1:
             raise GeneratorError("the AppleGVA selection log strings do not resolve to one function")
         function_start, function_end = anchor_functions.pop()
         function_size = function_end - function_start
         code = cache.read(function_start, function_size)
 
-        branch_matches = []
-        cursor = 0
-        while True:
-            offset = code.find(BRANCH_PROLOGUE, cursor)
-            if offset < 0:
-                break
-            branch_matches.append(offset)
-            cursor = offset + 1
-        if len(branch_matches) != 1:
-            raise GeneratorError(
-                f"expected one 'test r15,r15; je' branch in the selection function, found {len(branch_matches)}"
-            )
-        branch_offset = branch_matches[0]
-        site_offset = branch_offset + len(BRANCH_PROLOGUE) - 2  # start of the `je`
-        site = function_start + site_offset
-        original_displacement = i32(code, site_offset + 2)
-        original_target = site + 6 + original_displacement
-        if not (function_start < original_target < function_end):
-            raise GeneratorError("the original branch leaves the selection function")
-
-        # The fall-through inserts the single accelerator in the -0x158 slot and
-        # jumps to the same empty-return target as the conditional branch.
-        fallthrough = cache.read(site + 6, 20)
-        if fallthrough[0:3] != INTEL_SLOT_LEA or i32(fallthrough, 3) != INTEL_SLOT_OFFSET:
-            raise GeneratorError("the branch fall-through does not load the -0x158 accelerator slot")
-        if fallthrough[7:10] != bytes.fromhex("4889DF") or fallthrough[10] != 0xE8 or fallthrough[15] != 0xE9:
-            raise GeneratorError("unexpected fall-through instructions after the selection branch")
-        fallthrough_jump = site + 21 + 5 + i32(fallthrough, 16)
-        if fallthrough_jump != original_target:
-            raise GeneratorError("the selection branch and the Intel insert path do not share a target")
-
-        # The AMD insertion tail is reached by the `gvaForceAMD*` overrides.  It
-        # pushes the first accelerator of the -0x130 AMD array returned by the same
-        # function and then returns the list.
-        tail_matches = []
-        cursor = 0
-        while True:
-            offset = code.find(AMD_TAIL, cursor)
-            if offset < 0:
-                break
-            tail_matches.append(offset)
-            cursor = offset + 1
-        if len(tail_matches) != 1:
-            raise GeneratorError(f"expected one AMD insertion tail, found {len(tail_matches)}")
-        tail = function_start + tail_matches[0]
-        if tail <= site + 6:
-            raise GeneratorError("the AMD insertion tail is not after the selection branch")
-        tail_bytes = cache.read(tail, 27)
-        if (
-            tail_bytes[0 : len(AMD_TAIL)] != AMD_TAIL
-            or tail_bytes[11:13] != bytes.fromhex("0F83")
-            or tail_bytes[17:20] != bytes.fromhex("488B85")
-            or i32(tail_bytes, 20) != AMD_ARRAY_OFFSET
-            or tail_bytes[24:27] != bytes.fromhex("498907")
-        ):
-            raise GeneratorError("the AMD insertion tail does not match the expected code pattern")
-        replacement_displacement = tail - (site + 6)
-        if not (0 < replacement_displacement < 0x7FFFFFFF):
-            raise GeneratorError("the derived replacement branch displacement is out of range")
+        if profile["branch_form"] == "tahoe":
+            branch = derive_branch_tahoe(cache, code, function_start, function_end, anchor_info)
+        else:
+            branch = derive_branch_sequoia(cache, code, function_start, function_end)
+        site = branch["site"]
+        original_displacement = branch["original_displacement"]
+        original_target = branch["original_target"]
+        tail = branch["tail"]
+        replacement_displacement = branch["replacement_displacement"]
 
         find = cache.read(site, 6)
         if find != bytes.fromhex("0F84") + struct.pack("<i", original_displacement):
@@ -632,6 +819,8 @@ def source_description(info: dict) -> str:
 def emit_header(info: dict) -> str:
     original = info["find"]
     replacement = info["replace"]
+    profile = info["profile"]
+    namespace = f"VDAGVAData{profile['namespace_suffix']}"
     description_first, description_second = description_parts(info)
     anchor_lines = "\n".join(
         f"//   {item['string']}\n//     string {item['string_address']:#x}, referenced by {item['reference']:#x}"
@@ -640,7 +829,7 @@ def emit_header(info: dict) -> str:
     page_lines = format_bytes("Page0", info["page"], declaration="[4096]")
     find_lines = format_bytes("Find0", original)
     replace_lines = format_bytes("Replace0", replacement)
-    header = f"""// AppleGVA 113.56 user-space VDA patch data for macOS 15.8.1
+    header = f"""// AppleGVA {info['gva_version']} user-space VDA patch data for macOS {info['product']}
 //
 // Copyright (C) 2026  ChefKiss.
 //
@@ -664,7 +853,7 @@ def emit_header(info: dict) -> str:
 //
 // Generated by tools/gen_vda_gva_data.py from the live dyld shared cache.
 // Do not edit by hand: regenerate and let --check validate the result.
-// Evidence and derivations: analysis/vda-1581-gva-data.md.
+// Evidence and derivations: {profile['evidence_doc']}.
 //
 // Source image: {info['gva_image']}
 //   macOS {info['product']} ({info['build']}), AppleGVA {info['gva_version']}, image UUID {info['gva_image_uuid']}
@@ -700,7 +889,7 @@ def emit_header(info: dict) -> str:
 #include <UserPatches.hpp>
 #include <libkern/OSTypes.h>
 
-namespace VDAGVAData {{
+namespace {namespace} {{
     // Exact 4 KiB {info['subcache']} file page {info['page_address']:#x} that contains the
     // selection branch.  The native page patcher compares the whole page before
     // writing anything.
@@ -722,7 +911,7 @@ namespace VDAGVAData {{
         // Return the AMD accelerator that was already collected instead of an empty list.
         {{UserPatcher::FileSegment::SegmentTextText, Page0, Find0, Replace0, sizeof(Find0), 0, 1}},
     }};
-}}    // namespace VDAGVAData
+}}    // namespace {namespace}
 """
     return header
 
@@ -779,33 +968,6 @@ def check_header(header_path: Path, info: dict) -> bool:
     expected_find = info["find"]
     expected_replace = info["replace"]
 
-    page = parse_byte_array(header, "Page0")
-    find = parse_byte_array(header, "Find0")
-    replace = parse_byte_array(header, "Replace0")
-    if page != expected_page:
-        raise GeneratorError(f"Page0 does not match the live cache page {info['page_address']:#x}")
-    if find != expected_find:
-        raise GeneratorError("Find0 does not match the live selection branch")
-    if replace != expected_replace:
-        raise GeneratorError("Replace0 does not match the derived replacement branch")
-    if len(find) > 32 or len(find) != len(replace):
-        raise GeneratorError("Find0/Replace0 violate the page patch constraints")
-
-    patches = parse_patches(header)
-    if len(patches) != 1:
-        raise GeneratorError(f"expected one patch entry, found {len(patches)}")
-    patch = patches[0]
-    if (
-        patch["segment"] != "UserPatcher::FileSegment::SegmentTextText"
-        or patch["page"] != "Page0"
-        or patch["find"] != "Find0"
-        or patch["replace"] != "Replace0"
-        or patch["size_name"] != "Find0"
-        or patch["skip"] != 0
-        or patch["count"] != 1
-    ):
-        raise GeneratorError(f"unexpected Patches[] entry: {patch}")
-
     description = source_description(info)
     description_match = re.search(
         r"inline\s+constexpr\s+char\s+SourceDescription\s*\[\s*\]\s*=\s*(.*?)\s*;", header, re.S
@@ -854,7 +1016,18 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--check", action="store_true", help="verify the emitted header against the live cache")
     parser.add_argument("--cache-dir", type=Path, default=None, help="override the dyld shared cache directory")
-    parser.add_argument("--header", type=Path, default=DEFAULT_HEADER, help="header path to write or check")
+    parser.add_argument("--header", type=Path, default=None, help="header path to write or check")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("/"),
+        help="target system root for version plists (e.g. a mounted Tahoe volume)",
+    )
+    parser.add_argument(
+        "--force-live-cache",
+        action="store_true",
+        help="allow generating from the live cache on a -NRedVDA/-NRedAVC boot (page cache may be polluted)",
+    )
     args = parser.parse_args(argv)
 
     cache_dir = args.cache_dir
@@ -866,19 +1039,29 @@ def main(argv: list[str]) -> int:
     if cache_dir is None or not cache_dir.is_dir():
         print(f"error: no dyld shared cache directory found in {CACHE_CANDIDATES}", file=sys.stderr)
         return 1
+    live_patched = warn_if_live_patched_cache(cache_dir)
+    if live_patched and not args.check and not args.force_live_cache:
+        print(
+            "error: refusing to generate from the live dyld cache while the VDA user-space patches are "
+            "active; the page cache may return patched bytes. Boot without -NRedVDA/-NRedAVC, point "
+            "--cache-dir at an offline volume, or pass --force-live-cache to override.",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
-        info = derive(cache_dir)
+        info = derive(cache_dir, args.root, args.header)
+        header_path = args.header or default_header_path(info["profile"])
         print_evidence(info)
         if args.check:
-            if not args.header.is_file():
-                raise GeneratorError(f"header does not exist: {args.header}")
-            check_header(args.header, info)
-            print(f"OK: {args.header} matches the live cache")
+            if not header_path.is_file():
+                raise GeneratorError(f"header does not exist: {header_path}")
+            check_header(header_path, info)
+            print(f"OK: {header_path} matches the live cache")
         else:
             header = emit_header(info)
-            args.header.write_text(header)
-            print(f"wrote {args.header}")
+            header_path.write_text(header)
+            print(f"wrote {header_path}")
     except (GeneratorError, OSError, struct.error) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

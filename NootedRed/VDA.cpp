@@ -33,6 +33,7 @@ namespace
 
     const char* const kBootArgVDA = "-NRedVDA";
     const char* const kBootArgAVC = "-NRedAVC";
+    const char* const kBootArgAVCEncode = "-NRedAVCEncode";
 
 }    // namespace
 
@@ -40,18 +41,23 @@ VDA& VDA::singleton() { return moduleInstance; }
 
 void VDA::init()
 {
-    const bool vdaReq = checkKernelArgument(kBootArgVDA);
-    const bool avcReq = checkKernelArgument(kBootArgAVC);
+    const bool vdaReq    = checkKernelArgument(kBootArgVDA);
+    const bool avcReq    = checkKernelArgument(kBootArgAVC);
+    const bool avcEncReq = checkKernelArgument(kBootArgAVCEncode);
 
-    this->requested = vdaReq || avcReq;
-    this->avcOnly   = avcReq;
+    this->requested = vdaReq || avcReq || avcEncReq;
+    this->avcOnly   = avcReq || avcEncReq;
+    this->hevcEncodeAllowed = vdaReq || avcEncReq;
 
     if (!this->requested) {
-        DBGLOG("VDA", "Hardware video decode is disabled; add -NRedVDA or -NRedAVC to opt in (experimental)");
+        DBGLOG("VDA", "Hardware video decode is disabled; add -NRedVDA, -NRedAVC or -NRedAVCEncode to opt in (experimental)");
         return;
     }
 
-    if (this->avcOnly) {
+    if (avcEncReq) {
+        DBGLOG("VDA", "-NRedAVCEncode is set: Hardware AVC decode and HEVC encode enabled, HEVC decode disabled (software fallback)");
+    }
+    else if (this->avcOnly) {
         DBGLOG("VDA", "-NRedAVC is set: Hardware AVC/H.264 decode enabled, HEVC disabled (software fallback)");
     }
     else {
@@ -74,13 +80,21 @@ void VDA::processPatcher()
 
     if (!this->requested) { return; }
 
+    const char* modeName = "-NRedVDA";
+    if (checkKernelArgument(kBootArgAVCEncode)) {
+        modeName = "-NRedAVCEncode";
+    } else if (this->avcOnly) {
+        modeName = "-NRedAVC";
+    }
+
     // The bridge reports its own readiness under the VCN tag; VDA only publishes the requested profile and
     // generation here.  If the bridge fails, software decode stays in use.
     DBGLOG("VDA", "%s requested for %s; VCN bridge readiness is reported by the VCN module",
-           this->avcOnly ? "-NRedAVC" : "-NRedVDA", profile->name);
+           modeName, profile->name);
 
     NRed::singleton().setProp32("NRedVDARequested", static_cast<UInt32>(this->requested));
     NRed::singleton().setProp32("NRedVDAAVCOnly", static_cast<UInt32>(this->avcOnly));
+    NRed::singleton().setProp32("NRedVDAHEVCEncodeAllowed", static_cast<UInt32>(this->hevcEncodeAllowed));
     // The VCN bridge owns the effective enablement and updates this property after engine allocation.
     NRed::singleton().setProp32("NRedVDAMediaEnabled", 0);
     NRed::singleton().setProp32("NRedVCNGeneration", vcnGeneration);

@@ -31,21 +31,24 @@ class VDA
 {
     bool requested{false};
     bool avcOnly{false};
+    bool hevcEncodeAllowed{false};
 
 public:
     static VDA& singleton();
 
-    // Parses the -NRedVDA and -NRedAVC boot arguments.  Called from `NRed::init()`, before the device is known.
+    // Parses the -NRedVDA, -NRedAVC and -NRedAVCEncode boot arguments.  Called from `NRed::init()`, before the device is known.
     void init();
 
     // Resolves the running device profile and logs the media policy.  Called from `NRed::processPatcher()`
     // once the device ID is known.
     void processPatcher();
 
-    // True when the user explicitly opted in with -NRedVDA or -NRedAVC.
+    // True when the user explicitly opted in with -NRedVDA, -NRedAVC or -NRedAVCEncode.
     bool isRequested() const { return this->requested; }
 
-    // True when the user opted in with -NRedAVC (AVC/H.264 only, HEVC disabled).
+    // True when the user opted in with -NRedAVC or -NRedAVCEncode (AVC/H.264 decode only, HEVC decode disabled).
     bool isAVCOnly() const { return this->avcOnly; }
 
+    // True when HEVC hardware encode is allowed (-NRedVDA or -NRedAVCEncode).
+    bool isHEVCEncodeAllowed() const { return this->hevcEncodeAllowed; }
 };
