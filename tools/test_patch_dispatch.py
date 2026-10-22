@@ -55,6 +55,9 @@ struct VCNBridge {
     static VCNBridge& singleton() { static VCNBridge v; return v; }
     bool loadReady() const { return ready; }
 };
+bool fairPlayClient = false;
+void* current_task() { return nullptr; }
+bool isFairPlayClient(void*) { return fairPlayClient; }
 SInt32 OSIncrementAtomic(SInt32* value) { return (*value)++; }
 const char* args = "";
 bool checkKernelArgument(const char* arg) {
@@ -207,6 +210,27 @@ int main() {
         std::memcpy(data, stock, sizeof(data));
         return p;
     };
+    for (bool fallback : {false, true}) {
+        auto p = fixture();
+        p.nativePages[0].vda = true;
+        p.resolverEnabled = p.semanticEnabled = false;
+        if (fallback) data[0] ^= 1;
+        fairPlayClient = true;
+        p.patchNativePage(data, 0xE000, nullptr, false);
+        require(data[32] == find && p.vdaAppliedCount == 0,
+                "FairPlay clients skip both exact and contextual VDA patches");
+        fairPlayClient = false;
+        p.patchNativePage(data, 0xE000, nullptr, false);
+        require(data[32] == replace && p.vdaAppliedCount == 1,
+                "non-FairPlay clients retain both exact and contextual VDA patches");
+    }
+    {
+        auto p = fixture();
+        fairPlayClient = true;
+        p.patchNativePage(data, 0xE000, nullptr, false);
+        require(data[32] == replace, "FairPlay entitlement does not suppress GL patches");
+        fairPlayClient = false;
+    }
     {
         auto p = fixture();
         p.resolverOnly = true;

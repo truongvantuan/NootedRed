@@ -1,4 +1,4 @@
-# Combined NootedRed 0.9.4
+# Combined NootedRed 1.0.0
 
 This fork combines the `master` branches of [Weachy](https://github.com/weachy/NootedRed) and
 [xiaot-evo](https://github.com/xiaot-evo/NootedRed), preserving local compiler fixes, CI and regression tools.
@@ -7,7 +7,7 @@ This fork combines the `master` branches of [Weachy](https://github.com/weachy/N
 
 | Source | Revision | Changes integrated |
 | --- | --- | --- |
-| Weachy | `7387e010adea8bb57694857e83d7af207811b27b` | Tahoe VDA/resolver, hybrid GPU detection, `-NRedAVCEncode`, GFXOFF diagnostics, compute-hook pause, Metal SubmitGuard, offline generators and site fallback |
+| Weachy | `3b37dfc6282016608962b2746d7809765ad121f4` | Previous integration plus corrected SubmitGuard syscall ABI and shared-cache base lookup, FairPlay VDA exclusion, dynamic Metal LegacyBlend, compatibility collector improvements and version 1.0.0 |
 | xiaot-evo | `0efa6f4f36117fb603be968c1341006bf4da8c37` | Tahoe VCN variant, family-prefix variants, corrected semantic scan stopping point, Firefox/Zen launcher |
 | Previous combined baseline | `2e88d17` | Local compiler/CI fixes, OS-specific rendering tables, semantic and signature fallback, per-build VCN data |
 
@@ -43,6 +43,14 @@ known method prologue, installs the upstream PM4 tail-filler payload and publish
 `-NRedNoSubmitGuard` opts out. The PM4 compute submission vtable overwrite is paused, matching both
 upstreams' Quick Look/Metal hang investigation. Neither change is hardware-validated in this fork yet.
 
+The 1.0.0 update corrects the shared-region syscall wrapper to forward process, argument and return-value
+pointers, and reads the process's shared-cache base before applying SubmitGuard. Its new LegacyBlend
+patch runs from that SubmitGuard path, independently of GLFIX, using Darwin-specific offsets and opcode
+checks to address Metal dropdown rendering. `-NRedNoSubmitGuard` disables both. LegacyBlend is skipped
+when the SubmitGuard path returns early, including when SubmitGuard is already installed. The existing
+GLFIX exact-page, semantic and signature paths remain available. FairPlay-entitled tasks now skip VDA
+patches in both the exact-page and contextual-site paths. These changes require hardware validation.
+
 ## Boot arguments
 
 | Argument | Effect |
@@ -59,7 +67,7 @@ upstreams' Quick Look/Metal hang investigation. Neither change is hardware-valid
 | `-NRedAVCEncode` | H.264 hardware decode, software HEVC decode, preserve HEVC hardware encode |
 | `-NRedVCNNoGfxOff` | Optional GFXOFF hold when a video mode is requested |
 | `-NRedForceVDA` | Override the external AMD GPU block |
-| `-NRedNoSubmitGuard` | Disable the otherwise-default Metal SubmitGuard |
+| `-NRedNoSubmitGuard` | Disable the otherwise-default Metal SubmitGuard and its LegacyBlend path |
 | `-NRedDPFix` | Opt into the guarded DisplayPort recovery candidate on the inspected Renoir/Sonoma build |
 
 Keep unrelated boot arguments. Use one video mode; existing `-NRedGLFix -NRedVDA` remains supported.
@@ -91,6 +99,10 @@ VCN generation retains the variant format and supports `--root`/`--darwin` for o
 imports include Tahoe generation support. Hardware scripts recognize all three video modes and keep
 HEVC decode and encode checks separate.
 
+The compatibility collector detects the macOS version and creates `nred-compat-<version>` beneath
+`--out` (the current directory by default). An explicit output name beginning with `nred-compat` is
+also accepted. ZIP names retain the complete version string, including all dots.
+
 Run the host checks:
 
 ```sh
@@ -116,8 +128,9 @@ sh tools/build-branch.sh -y
 ```
 
 Artifacts remain under `build/branches/<sanitized-branch>/macosx/x86_64/release/`, with timestamped ZIPs.
-The integration was prepared on Linux: a macOS kext build, SubmitGuard installation, boot, rendering,
-playback, encode output and sleep/wake checks remain pending. No kext was installed or deployed.
+The 1.0.0 integration was checked on macOS with host regression tests. A kext build remains pending:
+this checkout's host lacks full Xcode, xmake and AppleForge. SubmitGuard installation, boot, rendering,
+playback, encode output and sleep/wake checks also remain pending. No kext was installed or deployed.
 
 Local Renoir `0x1636` / Sonoma `23J631` 0.9.1 tests found compute hangs with GLFIX+VDA, GLFIX only, and
 both disabled. Earlier 0.9.0 short decode probes passed but encoding produced incorrect pixels. The new
@@ -126,9 +139,9 @@ hang-related changes require fresh hardware tests before claiming that those fai
 ## Future updates
 
 ```sh
-git fetch weachy master
+git fetch upstream master
 git fetch xiaot-evo master
-git merge weachy/master
+git merge upstream/master
 git merge xiaot-evo/master
 ```
 

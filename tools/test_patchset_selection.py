@@ -4,6 +4,7 @@
 Reads the actual C++ patch-set table so the family ordering and OS ranges cannot drift from the kext.
 It does not load the kext or exercise the runtime major-version/semantic fallback.
 """
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path

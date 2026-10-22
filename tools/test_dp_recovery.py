@@ -4,6 +4,8 @@
 On this Sonoma host, also validate against the actual stock framebuffer in the KC.
 Does not access the running GPU, install a kext, or claim hardware wake is fixed.
 """
+from __future__ import annotations
+
 from pathlib import Path
 import mmap
 import os

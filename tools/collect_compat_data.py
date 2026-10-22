@@ -22,9 +22,9 @@ Output layout (one directory, optionally zipped):
 
 Examples:
 
-    python3 tools/collect_compat_data.py --out /tmp/nred-compat-15.8.1
-    python3 tools/collect_compat_data.py --out /tmp/nred-compat-15.8.1 --zip
-    python3 tools/collect_compat_data.py --out /tmp/nred-compat-tahoe --include-kc
+    python3 tools/collect_compat_data.py --out /tmp
+    python3 tools/collect_compat_data.py --out /tmp --zip
+    python3 tools/collect_compat_data.py --zip
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import platform
 import plistlib
 import re
 import shutil
@@ -101,6 +102,19 @@ def run(command: list[str], timeout: int = 120) -> dict:
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def get_macos_version() -> str:
+    ver = platform.mac_ver()[0]
+    if ver:
+        return ver.strip()
+    try:
+        completed = subprocess.run(["sw_vers", "-productVersion"], capture_output=True, text=True, timeout=5)
+        if completed.returncode == 0 and completed.stdout.strip():
+            return completed.stdout.strip()
+    except Exception:
+        pass
+    return "unknown"
 
 
 def write_json(path: Path, value) -> None:
@@ -827,10 +841,11 @@ def collect_manifest(root: Path, args, metadata: dict, chromium: dict, vda: dict
 
 
 def main() -> int:
+    macos_ver = get_macos_version()
+    default_name = f"nred-compat-{macos_ver}"
     parser = argparse.ArgumentParser(description="Collect compatibility data for a macOS build/APU")
-    parser.add_argument("--out", type=Path,
-                        default=Path(f"NootedRed-compat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"),
-                        help="output directory (default: %(default)s)")
+    parser.add_argument("--out", type=Path, default=Path("."),
+                        help=f"destination parent directory (default: current directory, generating {default_name})")
     parser.add_argument("--zip", action="store_true", help="also create <out>.zip")
     parser.add_argument("--cache-dir", type=Path, help="override the dyld shared cache directory")
     parser.add_argument("--include-kc", action="store_true",
@@ -839,7 +854,12 @@ def main() -> int:
                         help="do not try to run the VCN/VA/GVA generators")
     args = parser.parse_args()
 
-    root = args.out
+    out_arg = args.out
+    if out_arg.name.startswith("nred-compat"):
+        root = out_arg
+    else:
+        root = out_arg / default_name
+
     if root.exists():
         raise SystemExit(f"output already exists: {root}")
     root.mkdir(parents=True)
@@ -855,7 +875,7 @@ def main() -> int:
     manifest = collect_manifest(root, args, metadata, chromium, vda, warnings)
 
     if args.zip:
-        archive_path = root.with_suffix(".zip")
+        archive_path = root.with_name(f"{root.name}.zip")
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(root.rglob("*")):
                 if path.is_file():

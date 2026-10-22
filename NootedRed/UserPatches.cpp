@@ -38,6 +38,8 @@
 #include <mach/vm_map.h>
 #include <mach/vm_region.h>
 #include <kern/task.h>
+#include <IOKit/IOUserClient.h>
+#include <libkern/c++/OSBoolean.h>
 
 static UserPatches moduleInstance;
 
@@ -61,6 +63,22 @@ namespace
     const char* const kBootArgAVC              = "-NRedAVC";
     const char* const kBootArgAVCEncode        = "-NRedAVCEncode";
     const char* const kBootArgNoSubmitGuard    = "-NRedNoSubmitGuard";
+
+    struct SharedRegionCheckArgs
+    {
+        user_addr_t startAddress;
+    };
+    static_assert(sizeof(SharedRegionCheckArgs) == 8);
+    using SharedRegionCheck = int (*)(proc_t, SharedRegionCheckArgs*, int*);
+
+    bool isFairPlayClient(const task_t task)
+    {
+        if (task == nullptr) { return false; }
+        auto* entitlement = IOUserClient::copyClientEntitlement(task, "com.apple.private.fpsd.client");
+        const bool client = (entitlement == kOSBooleanTrue);
+        if (entitlement != nullptr) { entitlement->release(); }
+        return client;
+    }
 
     using GetTaskMap = vm_map_t (*)(task_t);
     using RegionRecurse = kern_return_t (*)(vm_map_t, mach_vm_address_t*, mach_vm_size_t*, natural_t*,
@@ -1030,6 +1048,11 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
             continue;
         }
 
+        if (page.vda && isFairPlayClient(current_task())) {
+            DBGLOG("UserPatch", "Skipping VDA patches for FairPlay client task");
+            continue;
+        }
+
         // The page matches, so these checks can only fail when the table is inconsistent; never patch then.
         for (size_t siteIndex = 0; siteIndex < page.siteCount; siteIndex++) {
             const auto& site = page.sites[siteIndex];
@@ -1120,6 +1143,11 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
             continue;
         }
 
+        if (page.vda && isFairPlayClient(current_task())) {
+            DBGLOG("UserPatch", "Skipping VDA patches for FairPlay client task (site fallback)");
+            continue;
+        }
+
         if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) {
             SYSLOG("UserPatch", "Failed to disable kernel write protection for site fallback");
             return;
@@ -1187,17 +1215,17 @@ boolean_t UserPatches::wrapCsValidateRange(void* const vnode, void* const pager,
     return result;
 }
 
-int UserPatches::wrapSharedRegionCheck(void* const shared_region, const cpu_type_t cpu)
+int UserPatches::wrapSharedRegionCheck(proc_t process, void* args, int* returnValue)
 {
     auto& patches = singleton();
-    const auto result = FunctionCast(wrapSharedRegionCheck, patches.orgSharedRegionCheck)(shared_region, cpu);
-    if (result == 0 && patches.submitGuardEnabled) {
-        patches.applySubmitGuard();
+    const auto result = FunctionCast(wrapSharedRegionCheck, patches.orgSharedRegionCheck)(process, args, returnValue);
+    if (result == 0 && patches.submitGuardEnabled && args != nullptr) {
+        patches.applySubmitGuard(process, args);
     }
     return result;
 }
 
-void UserPatches::applySubmitGuard()
+void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
 {
     if (getTaskMapFunc == nullptr || copyInFunc == nullptr || copyOutFunc == nullptr) {
         return;
@@ -1214,7 +1242,18 @@ void UserPatches::applySubmitGuard()
         return;
     }
 
-    const auto method = UserSubmitGuardData::kDyldSharedCacheBase + methodOffset;
+    mach_vm_offset_t base = UserSubmitGuardData::kDyldSharedCacheBase;
+    if (rawArgs != nullptr) {
+        const auto* args = static_cast<const SharedRegionCheckArgs*>(rawArgs);
+        if (args->startAddress != 0) {
+            mach_vm_offset_t userBase{0};
+            if (copyInFunc(reinterpret_cast<const void*>(args->startAddress), &userBase, sizeof(userBase)) == 0 && userBase != 0) {
+                base = userBase;
+            }
+        }
+    }
+
+    const auto method = base + methodOffset;
     UInt8 entry[UserSubmitGuardData::MethodPatchSize];
     if (copyInFunc(reinterpret_cast<const void*>(method), entry, sizeof(entry)) != 0) {
         return;
@@ -1283,10 +1322,10 @@ void UserPatches::applySubmitGuard()
 
     if (written == 0 && restored == KERN_SUCCESS) {
         static volatile UInt32 appliedCounter{0};
-        const auto count = OSIncrementAtomic(&appliedCounter) + 1;
+        const auto count = static_cast<UInt32>(OSIncrementAtomic(&appliedCounter) + 1);
         NRed::singleton().setProp32("NRedSubmitGuardApplied", count);
 
-        const auto proc = current_proc();
+        const auto proc = (process != nullptr) ? process : current_proc();
         if (proc != nullptr) {
             const auto pid = proc_pid(proc);
             char name[32]{};
@@ -1297,6 +1336,118 @@ void UserPatches::applySubmitGuard()
                 NRed::singleton().setProp32("NRedSubmitGuardWindowServerApplied", 1);
             }
             DBGLOG("UserPatch", "SubmitGuard installed in %s (PID %d)", name, pid);
+        }
+    }
+
+    // Also apply Metal LegacyBlend / dual-quad fix to this dyld shared cache instance
+    this->applyLegacyBlend(map, base, process);
+}
+
+void UserPatches::applyLegacyBlend(vm_map_t map, mach_vm_offset_t base, proc_t process)
+{
+    const auto kernelMajor = currentKernelVersion().major();
+    mach_vm_offset_t gateOffset = 0;
+    mach_vm_offset_t allowOffset = 0;
+
+    if (kernelMajor == 23) {
+        // macOS 14 Sonoma (Darwin 23)
+        // Gate (75 0B -> EB 0B) at 0x30354D1BCULL
+        // Allow (force DISABLE_DUAL_QUAD = 1: B0 01 90) at 0x30354D1DBULL
+        gateOffset = 0x30354D1BCULL;
+        allowOffset = 0x30354D1DBULL;
+    } else if (kernelMajor == 24) {
+        // macOS 15 Sequoia (Darwin 24)
+        gateOffset = 0x3087B3164ULL;
+        allowOffset = 0x3087B3185ULL;
+    } else if (kernelMajor == 25) {
+        // macOS 26 Tahoe (Darwin 25)
+        gateOffset = 0x310C77708ULL;
+    } else {
+        return;
+    }
+
+    const mach_vm_address_t gateAddr = base + gateOffset;
+    UInt8 gateBytes[2]{};
+    if (copyInFunc(reinterpret_cast<const void*>(gateAddr), gateBytes, sizeof(gateBytes)) != 0) {
+        return;
+    }
+
+    bool needsGatePatch = false;
+    UInt8 targetGate[2]{0xEB, 0x0B};
+    if (kernelMajor == 23 || kernelMajor == 24) {
+        if (gateBytes[0] == 0x75 && gateBytes[1] == 0x0B) {
+            needsGatePatch = true;
+        } else if (gateBytes[0] == 0xEB && gateBytes[1] == 0x0B) {
+            // Already patched gate
+        } else {
+            return; // Unknown opcode, safely skip
+        }
+    } else if (kernelMajor == 25) {
+        targetGate[0] = 0xEB; targetGate[1] = 0x00;
+        if (gateBytes[0] == 0x74 && gateBytes[1] == 0x28) {
+            needsGatePatch = true;
+        }
+    }
+
+    bool needsAllowPatch = false;
+    UInt8 targetAllow[3] = {0xB0, 0x01, 0x90};
+    mach_vm_address_t allowAddr = 0;
+    if (allowOffset != 0) {
+        allowAddr = base + allowOffset;
+        UInt8 allowBytes[3]{};
+        if (copyInFunc(reinterpret_cast<const void*>(allowAddr), allowBytes, sizeof(allowBytes)) == 0) {
+            if ((allowBytes[0] == 0x31 && allowBytes[1] == 0xC0 && allowBytes[2] == 0x90) ||
+                (allowBytes[0] == 0x0F && allowBytes[1] == 0x93 && allowBytes[2] == 0xC0) ||
+                (allowBytes[0] == 0x0F && allowBytes[1] == 0x94 && allowBytes[2] == 0xC0)) {
+                needsAllowPatch = true;
+            }
+        }
+    }
+
+    if (!needsGatePatch && !needsAllowPatch) {
+        return;
+    }
+
+    const mach_vm_address_t pageAddr = gateAddr & ~static_cast<mach_vm_address_t>(PAGE_SIZE - 1);
+    vm_prot_t protection{VM_PROT_NONE};
+    if (!leafProtection(map, pageAddr, protection) || protection != (VM_PROT_READ | VM_PROT_EXECUTE)) {
+        return;
+    }
+
+    auto result = vm_protect(map, pageAddr, PAGE_SIZE, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+    if (result != KERN_SUCCESS) {
+        return;
+    }
+
+    int writeErr = 0;
+    if (needsGatePatch) {
+        writeErr |= copyOutFunc(targetGate, reinterpret_cast<void*>(gateAddr), sizeof(targetGate));
+    }
+    if (needsAllowPatch && allowAddr != 0) {
+        writeErr |= copyOutFunc(targetAllow, reinterpret_cast<void*>(allowAddr), sizeof(targetAllow));
+    }
+
+    auto restored = vm_protect(map, pageAddr, PAGE_SIZE, FALSE, protection);
+    if (restored == KERN_SUCCESS) {
+        vm_protect(map, pageAddr, PAGE_SIZE, TRUE, protection);
+    }
+
+    if (writeErr == 0 && restored == KERN_SUCCESS) {
+        static volatile UInt32 blendCounter{0};
+        const auto count = static_cast<UInt32>(OSIncrementAtomic(&blendCounter) + 1);
+        NRed::singleton().setProp32("NRedLegacyBlendApplied", count);
+
+        const auto proc = (process != nullptr) ? process : current_proc();
+        if (proc != nullptr) {
+            const auto pid = proc_pid(proc);
+            char name[32]{};
+            if (pid > 0) { proc_name(pid, name, sizeof(name)); }
+            name[sizeof(name) - 1] = '\0';
+            if (strcmp(name, "WindowServer") == 0) {
+                NRed::singleton().setProp32("NRedLegacyBlendWindowServerPID", static_cast<UInt32>(pid));
+                NRed::singleton().setProp32("NRedLegacyBlendWindowServerApplied", 1);
+            }
+            DBGLOG("UserPatch", "LegacyBlend patched in %s (PID %d)", name, pid);
         }
     }
 }
@@ -1333,7 +1484,9 @@ bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
 
     NRed::singleton().setProp32("NRedSubmitGuardEnabled", 1);
     NRed::singleton().setProp32("NRedSubmitGuardVersion", 1);
-    SYSLOG("UserPatch", "SubmitGuard enabled for Darwin %u (offset 0x%llX)", kernelMajor,
+    NRed::singleton().setProp32("NRedLegacyBlendEnabled", 1);
+    NRed::singleton().setProp32("NRedLegacyBlendVersion", 1);
+    SYSLOG("UserPatch", "SubmitGuard and LegacyBlend enabled for Darwin %u (offset 0x%llX)", kernelMajor,
            UserSubmitGuardData::getMethodOffset(kernelMajor));
     return true;
 }
