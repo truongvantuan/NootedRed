@@ -42,7 +42,7 @@ along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowled
 
 ## Documentation
 
-- [Combined fork 0.9.3](docs/Combined-Fork.md) — current runtime behavior, integrated revisions,
+- [Combined fork 0.9.4](docs/Combined-Fork.md) — current runtime behavior, integrated revisions,
   boot arguments, build instructions, and local hardware findings.
 - [Architecture proposal](docs/ARCHITECTURE.md) — upstream's proposed kernel/root-patch separation;
   the root patcher is not implemented or distributed in this version.

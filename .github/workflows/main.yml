@@ -51,6 +51,9 @@ jobs:
           python3 tools/test_patch_dispatch.py
           python3 tools/test_vcn_multibuild.py
           python3 tools/test_video_modes.py
+          python3 tools/test_dp_recovery.py
+          python3 tools/test_atom_loop_guard.py
+          python3 tools/test_atom_native_vm.py
 
       - name: Verify and stage release
         run: |

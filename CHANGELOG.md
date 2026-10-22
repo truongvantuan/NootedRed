@@ -1,5 +1,13 @@
 # Change log
 
+## v0.9.4 — DisplayPort recovery candidate (2026-10-22)
+
+- Merge `fix/displayport-retrain` (`c33c5db`) while retaining the combined upstream integration.
+- Add opt-in `-NRedDPFix` receiver wake sequencing and a guarded transmitter BIOS-loop deadline
+  for the inspected Renoir / Sonoma `23J631` framebuffer.
+- Add DP wake, ATOM timeout/unwind and native interpreter checks to release CI.
+- Automatic monitor recovery still requires hardware verification.
+
 ## v0.9.3 — combined upstream update (2026-10-22)
 
 - Integrate Weachy `7387e01` and xiaot-evo `0efa6f4`, retaining local build/CI fixes and resolver behavior.

@@ -5,7 +5,7 @@ hardware could theoretically do. A feature is only `validated` when it has passe
 corresponding feature test on that exact build **and** APU.
 
 The historical `validated` entries below are upstream-reported results, not hardware validation of
-this combined 0.9.3 build. Local 0.9.1 Renoir `0x1636` / Sonoma `23J631` tests found a compute hang even
+this combined 0.9.4 build. Local 0.9.1 Renoir `0x1636` / Sonoma `23J631` tests found a compute hang even
 with GLFix and VDA disabled; short decode probes passed on 0.9.0, while encoding produced incorrect
 pixels. This integration has host checks only; a macOS build and hardware validation are pending.
 

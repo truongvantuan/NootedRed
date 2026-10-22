@@ -1,4 +1,4 @@
-# Combined NootedRed 0.9.3
+# Combined NootedRed 0.9.4
 
 This fork combines the `master` branches of [Weachy](https://github.com/weachy/NootedRed) and
 [xiaot-evo](https://github.com/xiaot-evo/NootedRed), preserving local compiler fixes, CI and regression tools.
@@ -15,6 +15,14 @@ Both source tips are recorded as merge ancestors. xiaot-evo rewrote its history 
 integrated `348948e` tree is identical to the rewritten `a4da11c` tree. The integration therefore uses
 the snapshot delta from that baseline, rather than replaying rewritten history over local fixes.
 Only these forks' `master` branches are included. No companion root patcher is shipped or installed.
+
+## DisplayPort recovery candidate
+
+Merged `fix/displayport-retrain` at `c33c5db`. `-NRedDPFix` opts into receiver pre-wake and a
+20-second transmitter BIOS branch-loop deadline for the inspected Renoir / Sonoma `23J631`
+framebuffer. The earlier receiver-only candidate failed monitor power-button recovery; this
+version still needs hardware verification. Other images leave the recovery hook uninstalled.
+See [DisplayPort-Recovery.md](DisplayPort-Recovery.md) for scope, evidence and diagnostic markers.
 
 ## Rendering behavior and integration decisions
 
@@ -52,6 +60,7 @@ upstreams' Quick Look/Metal hang investigation. Neither change is hardware-valid
 | `-NRedVCNNoGfxOff` | Optional GFXOFF hold when a video mode is requested |
 | `-NRedForceVDA` | Override the external AMD GPU block |
 | `-NRedNoSubmitGuard` | Disable the otherwise-default Metal SubmitGuard |
+| `-NRedDPFix` | Opt into the guarded DisplayPort recovery candidate on the inspected Renoir/Sonoma build |
 
 Keep unrelated boot arguments. Use one video mode; existing `-NRedGLFix -NRedVDA` remains supported.
 The standard NootedRed switches remain available. Hardware encoding still needs output validation.
@@ -91,11 +100,15 @@ python3 tools/test_gl_semantic_data.py
 python3 tools/test_patch_dispatch.py
 python3 tools/test_vcn_multibuild.py
 python3 tools/test_video_modes.py
+python3 tools/test_dp_recovery.py
+python3 tools/test_atom_loop_guard.py
+python3 tools/test_atom_native_vm.py
 ```
 
-The last three require a C++ compiler (`CXX` may override it). They execute production option parsing,
+The compiled checks require a C++ compiler (`CXX` may override it). They execute production option parsing,
 dispatch and VCN selection with kernel services stubbed. CI runs these checks on the existing macOS
-release workflow. On a Mac with AppleForge, build with:
+release workflow. The native ATOM VM test requires the inspected stock macOS framebuffer and skips
+when it is unavailable. On a Mac with AppleForge, build with:
 
 ```sh
 xmake f -m release -a x86_64 -y
