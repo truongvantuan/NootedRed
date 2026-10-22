@@ -160,6 +160,12 @@ namespace
     static const UInt8 kMTLAllowFind_Sequoia[]    = {0x0F, 0x94, 0xC0};
     static const UInt8 kMTLAllowReplace_Sequoia[] = {0x31, 0xC0, 0x90};
 
+    // Shared by the Tahoe exact-page and resolver tables below.
+    static const UInt8 kTahoeMTLGateFind[]    = {0x74, 0x28};
+    static const UInt8 kTahoeMTLGateReplace[] = {0xEB, 0x00};
+    static const UInt8 kTahoeMTLAllowFind[]   = {0x0F, 0x94, 0xC1};
+    static const UInt8 kTahoeMTLAllowReplace[] = {0x31, 0xC9, 0x90};
+
     #include "UserPatchesSonoma.inc"
     #include "UserPatchesSequoia.inc"
     #include "UserPatchesTahoe.inc"
@@ -291,10 +297,6 @@ namespace
     constexpr size_t kGLDriverPatchCount_Sequoia = arrsize(kGLDriverPatches_Sequoia);
 
     // 26.7.1 uses upstream's gate/allow strategy; the direct-field form remains experimental.
-    static const UInt8 kTahoeMTLGateFind[]    = {0x74, 0x28};
-    static const UInt8 kTahoeMTLGateReplace[] = {0xEB, 0x00};
-    static const UInt8 kTahoeMTLAllowFind[]   = {0x0F, 0x94, 0xC1};
-    static const UInt8 kTahoeMTLAllowReplace[] = {0x31, 0xC9, 0x90};
 
     static const UserPatches::PagePatch kGLDriverPatches_Tahoe[] = {
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverHwInfoPage_Tahoe,    kGLDriverHwInfoFind,

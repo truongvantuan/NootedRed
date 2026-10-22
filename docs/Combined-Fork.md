@@ -128,9 +128,11 @@ sh tools/build-branch.sh -y
 ```
 
 Artifacts remain under `build/branches/<sanitized-branch>/macosx/x86_64/release/`, with timestamped ZIPs.
-The 1.0.0 integration was checked on macOS with host regression tests. A kext build remains pending:
-this checkout's host lacks full Xcode, xmake and AppleForge. SubmitGuard installation, boot, rendering,
-playback, encode output and sleep/wake checks also remain pending. No kext was installed or deployed.
+The 1.0.0 integration was checked on macOS with host regression tests. Both x86_64 Debug and Release
+kexts were subsequently built with Apple clang 17 and Command Line Tools; full Xcode is not required.
+The compile exposed Tahoe resolver constants declared after their first use; their definitions were
+moved before both tables without changing the patch bytes. SubmitGuard installation, boot, rendering,
+playback, encode output and sleep/wake checks remain pending. No kext was installed or deployed.
 
 Local Renoir `0x1636` / Sonoma `23J631` 0.9.1 tests found compute hangs with GLFIX+VDA, GLFIX only, and
 both disabled. Earlier 0.9.0 short decode probes passed but encoding produced incorrect pixels. The new
