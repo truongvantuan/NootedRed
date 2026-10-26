@@ -30,6 +30,9 @@
 #include <UserPatches.hpp>
 #include <TahoePatchData.hpp>
 #include <UserSubmitGuard.hpp>
+#include <UserCodePatch.hpp>
+#include <UserSharedCacheData.hpp>
+#include <UserOpenGL.hpp>
 #include <VCNBridge.hpp>
 #include <libkern/OSAtomic.h>
 #include <libkern/OSTypes.h>
@@ -63,6 +66,9 @@ namespace
     const char* const kBootArgAVC              = "-NRedAVC";
     const char* const kBootArgAVCEncode        = "-NRedAVCEncode";
     const char* const kBootArgNoSubmitGuard    = "-NRedNoSubmitGuard";
+    const char* const kBootArgSubmitGuard      = "-NRedSubmitGuard";
+    const char* const kBootArgNoLegacyBlend    = "-NRedNoLegacyBlend";
+    const char* const kBootArgLegacyBlend      = "-NRedLegacyBlend";
 
     struct SharedRegionCheckArgs
     {
@@ -91,7 +97,8 @@ namespace
     CopyIn        copyInFunc{nullptr};
     CopyOut       copyOutFunc{nullptr};
 
-    bool leafProtection(vm_map_t map, const mach_vm_address_t page, vm_prot_t& protection)
+    bool leafProtection(vm_map_t map, const mach_vm_address_t page, vm_prot_t& protection,
+                        vm_prot_t* maximum = nullptr)
     {
         if (queryRegionFunc == nullptr) { return false; }
         natural_t depth{0};
@@ -105,11 +112,69 @@ namespace
             if (result != KERN_SUCCESS) { return false; }
             if (count < VM_REGION_SUBMAP_SHORT_INFO_COUNT_64 || address > page || page - address >= size
                 || size - (page - address) < PAGE_SIZE) { return false; }
-            if (!info.is_submap) { protection = info.protection; return true; }
+            if (!info.is_submap) {
+                protection = info.protection;
+                if (maximum != nullptr) { *maximum = info.max_protection; }
+                return true;
+            }
             if (depth == ~0U) { break; }
             ++depth;
         }
         return false;
+    }
+
+    struct UserCodeMemory
+    {
+        vm_map_t map;
+        bool read(UInt64 address, void* data, size_t size) const
+        { return copyInFunc(reinterpret_cast<const void*>(address), data, size) == 0; }
+        bool write(UInt64 address, const void* data, size_t size) const
+        { return copyOutFunc(data, reinterpret_cast<void*>(address), size) == 0; }
+        bool isRX(UInt64 address) const
+        {
+            vm_prot_t protection{VM_PROT_NONE};
+            return leafProtection(map, address & ~static_cast<UInt64>(PAGE_SIZE - 1), protection)
+                   && protection == (VM_PROT_READ | VM_PROT_EXECUTE);
+        }
+        bool writable(UInt64 address) const
+        {
+            return vm_protect(map, address & ~static_cast<UInt64>(PAGE_SIZE - 1), PAGE_SIZE,
+                              FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS;
+        }
+        bool executable(UInt64 address) const
+        {
+            return vm_protect(map, address & ~static_cast<UInt64>(PAGE_SIZE - 1), PAGE_SIZE,
+                              FALSE, VM_PROT_READ | VM_PROT_EXECUTE) == KERN_SUCCESS;
+        }
+    };
+
+    __attribute__((noinline)) bool userBytesEqual(UInt64 address, const UInt8* expected, size_t size)
+    {
+        UInt8 observed[64];
+        for (size_t offset = 0; offset < size; offset += sizeof(observed)) {
+            const auto remaining = size - offset;
+            const auto chunk = remaining < sizeof(observed) ? remaining : sizeof(observed);
+            if (copyInFunc(reinterpret_cast<const void*>(address + offset), observed, chunk) != 0
+                || memcmp(observed, expected + offset, chunk) != 0) { return false; }
+        }
+        return true;
+    }
+
+    __attribute__((noinline)) bool validSubmitGuardEntry(vm_map_t map, UInt64 method, const UInt8* entry)
+    {
+        UInt64 target{0};
+        memcpy(&target, entry + 6, sizeof(target));
+        vm_prot_t protection{VM_PROT_NONE}, maximum{VM_PROT_NONE};
+        if (entry[14] != 0x90 || (target & (PAGE_SIZE - 1)) != 0
+            || target >= 0x800000000000ULL - PAGE_SIZE
+            || !leafProtection(map, target, protection, &maximum)
+            || protection != (VM_PROT_READ | VM_PROT_EXECUTE)
+            || maximum != (VM_PROT_READ | VM_PROT_EXECUTE)) { return false; }
+        UInt8 expected[sizeof(UserSubmitGuardData::Payload)];
+        memcpy(expected, UserSubmitGuardData::Payload, sizeof(expected));
+        const UInt64 continuation = method + UserSubmitGuardData::MethodPatchSize;
+        memcpy(expected + UserSubmitGuardData::PayloadJumpOffset, &continuation, sizeof(continuation));
+        return userBytesEqual(target, expected, sizeof(expected));
     }
 
     // The patch bytes and page images below are specific to one driver build, and the native backend hooks
@@ -152,13 +217,7 @@ namespace
     static const UInt8 kMTLGateFind[]    = {0x75, 0x0B};
     static const UInt8 kMTLGateReplace[] = {0xEB, 0x0B};
 
-    // macOS 14 (Sonoma) Allow pattern: 0F 93 C0 (setae al) -> 31 C0 90 (xor eax,eax; nop)
-    static const UInt8 kMTLAllowFind_Sonoma[]    = {0x0F, 0x93, 0xC0};
-    static const UInt8 kMTLAllowReplace_Sonoma[] = {0x31, 0xC0, 0x90};
 
-    // macOS 15 (Sequoia) Allow pattern: 0F 94 C0 (setz al) -> 31 C0 90 (xor eax,eax; nop)
-    static const UInt8 kMTLAllowFind_Sequoia[]    = {0x0F, 0x94, 0xC0};
-    static const UInt8 kMTLAllowReplace_Sequoia[] = {0x31, 0xC0, 0x90};
 
     // Shared by the Tahoe exact-page and resolver tables below.
     static const UInt8 kTahoeMTLGateFind[]    = {0x74, 0x28};
@@ -166,10 +225,21 @@ namespace
     static const UInt8 kTahoeMTLAllowFind[]   = {0x0F, 0x94, 0xC1};
     static const UInt8 kTahoeMTLAllowReplace[] = {0x31, 0xC9, 0x90};
 
+    #include "UserPatchesVentura.inc"
     #include "UserPatchesSonoma.inc"
     #include "UserPatchesSequoia.inc"
     #include "UserPatchesTahoe.inc"
+    #include "UserPatchesGLBudget.inc"
+    #include "UserPatchesVAEncode.inc"
 
+    static const UserPatches::PagePatch kVAEncodePitchPatches_Sequoia[] = {
+        {UserPatcher::FileSegment::SegmentTextText, kVAEncodePitchPage_Sequoia,
+         kVAEncodePitchFind, kVAEncodePitchReplace, sizeof(kVAEncodePitchFind), 0, 1, false, true},
+    };
+
+    static const UInt8 kResolverMask32_RipMasked[] = {
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+        0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,0xFF};
     static const UInt8 kResolverMask32[] = {
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
         0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -188,20 +258,14 @@ namespace
         0xFF, 0xFF, 0x48, 0x8B, 0x85, 0x48, 0xFE, 0xFF, 0xFF, 0xF6, 0x80, 0xA0, 0x00, 0x00, 0x00, 0x02,
         0x75, 0x0B, 0x31, 0xC0, 0x48, 0x8B, 0x9D, 0x78, 0xFE, 0xFF, 0xFF, 0xEB, 0x1D, 0x80, 0xBD, 0x80,
     };
-    static const UInt8 kResolverAllowCtx_Sonoma[] = {
-        0x95, 0xC1, 0x48, 0x8B, 0x9D, 0x78, 0xFE, 0xFF, 0xFF, 0x4A, 0x0F, 0xBA, 0x64, 0x33, 0x08, 0x22,
-        0x0F, 0x93, 0xC0, 0x08, 0xC8, 0x4C, 0x8B, 0xB5, 0x70, 0xFE, 0xFF, 0xFF, 0x0F, 0xB6, 0xC0, 0x41,
-    };
 
     static const UserPatches::SignaturePatch kResolverSignatures_Sonoma[] = {
         {kResolverHwCtx_Sonoma, kResolverMask32, sizeof(kResolverHwCtx_Sonoma), 16, kGLDriverHwInfoReplace,
-         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000},
+         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000, true},
         {kResolverDualCtx_Sonoma, kResolverMask32, sizeof(kResolverDualCtx_Sonoma), 16, kGLDriverDualQuadReplace,
-         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000},
+         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000, true},
         {kResolverGateCtx_Sonoma, kResolverMask32, sizeof(kResolverGateCtx_Sonoma), 16, kMTLGateReplace,
          sizeof(kMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
-        {kResolverAllowCtx_Sonoma, kResolverMask32, sizeof(kResolverAllowCtx_Sonoma), 16, kMTLAllowReplace_Sonoma,
-         sizeof(kMTLAllowReplace_Sonoma), 0, 1, ~static_cast<UInt64>(0)},
     };
     constexpr size_t kResolverSignatureCount_Sonoma = arrsize(kResolverSignatures_Sonoma);
 
@@ -218,21 +282,15 @@ namespace
         0xFF, 0xFF, 0x48, 0x8B, 0x85, 0x28, 0xFE, 0xFF, 0xFF, 0xF6, 0x80, 0xA0, 0x00, 0x00, 0x00, 0x02,
         0x75, 0x0B, 0x31, 0xC0, 0x4C, 0x8B, 0x9D, 0x80, 0xFE, 0xFF, 0xFF, 0xEB, 0x2C, 0x83, 0xBD, 0x70,
     };
-    static const UInt8 kResolverSetzCtx[] = {
-        0xFF, 0x48, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x49, 0x85, 0x54, 0x03, 0x08,
-        0x0F, 0x94, 0xC0, 0x08, 0xC8, 0x4C, 0x8B, 0xB5, 0x88, 0xFE, 0xFF, 0xFF, 0x48, 0x8B, 0xB5, 0x50,
-    };
 
     // Resolver fallback for the 15.8.1 GL/Metal sites.
     static const UserPatches::SignaturePatch kResolverSignatures[] = {
         {kResolverHwCtx, kResolverMask32, sizeof(kResolverHwCtx), 16, kGLDriverHwInfoReplace,
-         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000},
+         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000, true},
         {kResolverDualCtx, kResolverMask32, sizeof(kResolverDualCtx), 16, kGLDriverDualQuadReplace,
-         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000},
+         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000, true},
         {kResolverGateCtx, kResolverMask32, sizeof(kResolverGateCtx), 16, kMTLGateReplace,
          sizeof(kMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
-        {kResolverSetzCtx, kResolverMask32, sizeof(kResolverSetzCtx), 16, kMTLAllowReplace_Sequoia,
-         sizeof(kMTLAllowReplace_Sequoia), 0, 1, ~static_cast<UInt64>(0)},
     };
     constexpr size_t kResolverSignatureCount = arrsize(kResolverSignatures);
 
@@ -262,9 +320,9 @@ namespace
 
     static const UserPatches::SignaturePatch kResolverSignatures_Tahoe[] = {
         {kResolverHwCtx_Tahoe, kResolverMask32_HwTahoe, sizeof(kResolverHwCtx_Tahoe), 16, kGLDriverHwInfoReplace,
-         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000},
+         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000, true},
         {kResolverDualCtx_Tahoe, kResolverMask32, sizeof(kResolverDualCtx_Tahoe), 16, kGLDriverDualQuadReplace,
-         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000},
+         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000, true},
         {kResolverGateCtx_Tahoe, kResolverMask32, sizeof(kResolverGateCtx_Tahoe), 16, kTahoeMTLGateReplace,
          sizeof(kTahoeMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
         {kResolverAllowCtx_Tahoe, kResolverMask32, sizeof(kResolverAllowCtx_Tahoe), 16, kTahoeMTLAllowReplace,
@@ -272,27 +330,102 @@ namespace
     };
     constexpr size_t kResolverSignatureCount_Tahoe = arrsize(kResolverSignatures_Tahoe);
 
+    // Make the same Metal change in private cache mappings as in the exact/semantic backends.
+    // Sonoma/Sequoia retain the stock dualSource || !allowRBPlus predicate after opening its gate.
+    bool legacyBlendPlan(UInt32 major, const UInt8* observed, UInt8* target,
+                         UInt64& pageOffset, size_t& first, size_t& size)
+    {
+        const UInt8* reference = nullptr;
+        size_t allow = 0;
+        if (major == 22) { reference = kMTLControlPage_Ventura; pageOffset = 0x3000BC000ULL; first = 0x22C; }
+        else if (major == 23) { reference = kMTLControlPage_Sonoma; pageOffset = 0x30354D000ULL; first = 0x1BC; }
+        else if (major == 24) { reference = kMTLControlPage_Sequoia; pageOffset = 0x3087B3000ULL; first = 0x164; }
+        else if (major == 25) { reference = kMTLControlPage_Tahoe; pageOffset = 0x310C77000ULL; first = 0x708; }
+        else { return false; }
+
+        const UInt8 stockGate[2] = {static_cast<UInt8>(major == 25 ? 0x74 : 0x75),
+                                    static_cast<UInt8>(major == 25 ? 0x28 : 0x0B)};
+        if (memcmp(reference + first, stockGate, sizeof(stockGate)) != 0) { return false; }
+        memcpy(target, observed, PAGE_SIZE);
+        const UInt8 gate[2] = {0xEB, static_cast<UInt8>(major == 25 ? 0x00 : 0x0B)};
+        if (memcmp(observed + first, reference + first, 2) != 0
+            && memcmp(observed + first, gate, 2) != 0) { return false; }
+        memcpy(target + first, reference + first, 2);
+        size = 2;
+        if (major == 25) {
+            // Preserve the existing Tahoe gate/allow pair, including the second SETcc occurrence.
+            size_t seen = 0;
+            for (size_t i = 0; i + sizeof(kTahoeMTLAllowFind) <= PAGE_SIZE; ++i) {
+                if (memcmp(reference + i, kTahoeMTLAllowFind, sizeof(kTahoeMTLAllowFind)) == 0
+                    && seen++ == 1) { allow = i; break; }
+            }
+            if (allow < first || allow + sizeof(kTahoeMTLAllowFind) - first > 128) { return false; }
+            if (memcmp(observed + allow, kTahoeMTLAllowFind, sizeof(kTahoeMTLAllowFind)) != 0
+                && memcmp(observed + allow, kTahoeMTLAllowReplace, sizeof(kTahoeMTLAllowReplace)) != 0) {
+                return false;
+            }
+            memcpy(target + allow, reference + allow, sizeof(kTahoeMTLAllowFind));
+            size = allow + sizeof(kTahoeMTLAllowFind) - first;
+        }
+        // No short-opcode-only match: every byte outside our known sites must match the reference.
+        if (memcmp(target, reference, PAGE_SIZE) != 0) { return false; }
+        memcpy(target + first, gate, 2);
+        if (allow != 0) { memcpy(target + allow, kTahoeMTLAllowReplace, sizeof(kTahoeMTLAllowReplace)); }
+        return true;
+    }
+
+    // macOS 13 (Ventura) resolver contexts.
+    static const UInt8 kResolverHwCtx_Ventura[] = {
+        0xAC, 0x00, 0x00, 0x00, 0x41, 0x83, 0xF9, 0x13, 0x77, 0x4D, 0xC7, 0x07, 0x8D, 0x00, 0x00, 0x00,
+        0xC7, 0x47, 0x78, 0x04, 0x00, 0x00, 0x00, 0xC5, 0xF8, 0x28, 0x05, 0x06, 0x0B, 0x0F, 0x00, 0xC5,
+    };
+    static const UInt8 kResolverDualCtx_Ventura[] = {
+        0x88, 0xA0, 0x00, 0x00, 0x00, 0xD1, 0xE9, 0x83, 0xE1, 0x01, 0x8B, 0x83, 0x98, 0x13, 0x00, 0x00,
+        0x83, 0xE0, 0xFE, 0x09, 0xC8, 0x89, 0x83, 0x98, 0x13, 0x00, 0x00, 0x48, 0x8B, 0x8B, 0x68, 0x0D,
+    };
+    static const UInt8 kResolverGateCtx_Ventura[] = {
+        0xFF, 0xFF, 0x48, 0x8B, 0x85, 0x40, 0xFE, 0xFF, 0xFF, 0xF6, 0x80, 0xA0, 0x00, 0x00, 0x00, 0x02,
+        0x75, 0x0B, 0x31, 0xC0, 0x4C, 0x8B, 0xA5, 0x70, 0xFE, 0xFF, 0xFF, 0xEB, 0x24, 0x80, 0xBD, 0x80,
+    };
+    static const UserPatches::SignaturePatch kResolverSignatures_Ventura[] = {
+        {kResolverHwCtx_Ventura, kResolverMask32_RipMasked, sizeof(kResolverHwCtx_Ventura), 16, kGLDriverHwInfoReplace,
+         sizeof(kGLDriverHwInfoReplace), 0, 1, 0xE000, true},
+        {kResolverDualCtx_Ventura, kResolverMask32, sizeof(kResolverDualCtx_Ventura), 16, kGLDriverDualQuadReplace,
+         sizeof(kGLDriverDualQuadReplace), 0, 1, 0x8000, true},
+        {kResolverGateCtx_Ventura, kResolverMask32, sizeof(kResolverGateCtx_Ventura), 16, kMTLGateReplace,
+         sizeof(kMTLGateReplace), 0, 1, ~static_cast<UInt64>(0)},
+    };
+    constexpr size_t kResolverSignatureCount_Ventura = arrsize(kResolverSignatures_Ventura);
+
+    static const UserPatches::PagePatch kGLDriverPatches_Ventura[] = {
+        {UserPatcher::FileSegment::SegmentTextText, kGLDriverHwInfoPage_Ventura,    kGLDriverHwInfoFind,
+         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1, true},
+        {UserPatcher::FileSegment::SegmentTextText, kGLDriverDualQuadPage_Ventura,  kGLDriverDualQuadFind,
+         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1, true},
+        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Ventura,        kMTLGateFind,
+         kMTLGateReplace,                           sizeof(kMTLGateFind),          0, 1},
+    };
+    constexpr size_t kGLDriverPatchCount_Ventura = arrsize(kGLDriverPatches_Ventura);
+
     static const UserPatches::PagePatch kGLDriverPatches_Sonoma[] = {
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverHwInfoPage_Sonoma,    kGLDriverHwInfoFind,
-         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
+         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1, true},
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverDualQuadPage_Sonoma,  kGLDriverDualQuadFind,
-         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
+         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1, true},
         {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Sonoma,        kMTLGateFind,
          kMTLGateReplace,                           sizeof(kMTLGateFind),          0, 1},
-        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Sonoma,        kMTLAllowFind_Sonoma,
-         kMTLAllowReplace_Sonoma,                   sizeof(kMTLAllowFind_Sonoma),  0, 1},
     };
     constexpr size_t kGLDriverPatchCount_Sonoma = arrsize(kGLDriverPatches_Sonoma);
 
     static const UserPatches::PagePatch kGLDriverPatches_Sequoia[] = {
+        {UserPatcher::FileSegment::SegmentTextText, kGLDriverBudgetPage_Sequoia, kGLDriverBudgetFind,
+         kGLDriverBudgetReplace, sizeof(kGLDriverBudgetFind), 0, 1, true, true},
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverHwInfoPage_Sequoia,    kGLDriverHwInfoFind,
-         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
+         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1, true},
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverDualQuadPage_Sequoia,  kGLDriverDualQuadFind,
-         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
+         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1, true},
         {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Sequoia,        kMTLGateFind,
          kMTLGateReplace,                           sizeof(kMTLGateFind),          0, 1},
-        {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Sequoia,        kMTLAllowFind_Sequoia,
-         kMTLAllowReplace_Sequoia,                  sizeof(kMTLAllowFind_Sequoia), 0, 1},
     };
     constexpr size_t kGLDriverPatchCount_Sequoia = arrsize(kGLDriverPatches_Sequoia);
 
@@ -300,9 +433,9 @@ namespace
 
     static const UserPatches::PagePatch kGLDriverPatches_Tahoe[] = {
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverHwInfoPage_Tahoe,    kGLDriverHwInfoFind,
-         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1},
+         kGLDriverHwInfoReplace,                    sizeof(kGLDriverHwInfoFind),   0, 1, true},
         {UserPatcher::FileSegment::SegmentTextText, kGLDriverDualQuadPage_Tahoe,  kGLDriverDualQuadFind,
-         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1},
+         kGLDriverDualQuadReplace,                  sizeof(kGLDriverDualQuadFind), 1, 1, true},
         {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Tahoe,        kTahoeMTLGateFind,
          kTahoeMTLGateReplace,                      sizeof(kTahoeMTLGateFind),     0, 1},
         {UserPatcher::FileSegment::SegmentTextText, kMTLControlPage_Tahoe,        kTahoeMTLAllowFind,
@@ -337,6 +470,9 @@ namespace
         {"14.x / Sonoma gfx9 APU", PenguinWizardry::KernelVersion(23, 0), PenguinWizardry::KernelVersion(23, 99),
          UserPatches::kApuAll, kGLDriverPatches_Sonoma, kGLDriverPatchCount_Sonoma,
          kResolverSignatures_Sonoma, kResolverSignatureCount_Sonoma},
+        {"13.x / Ventura gfx9 APU", PenguinWizardry::KernelVersion(22, 0), PenguinWizardry::KernelVersion(22, 99),
+         UserPatches::kApuAll, kGLDriverPatches_Ventura, kGLDriverPatchCount_Ventura,
+         kResolverSignatures_Ventura, kResolverSignatureCount_Ventura},
     };
     constexpr size_t kGLDriverPatchSetCount = sizeof(kGLDriverPatchSets) / sizeof(kGLDriverPatchSets[0]);
 
@@ -369,15 +505,20 @@ void UserPatches::init()
     this->semanticPatches    = GLFixSemantic::kPatches;
     this->semanticPatchCount = GLFixSemantic::kPatchCount;
     this->semanticEnabled    = this->enabled && !checkKernelArgument(kBootArgGLFixSemanticOff);
-    this->semanticMTLEnabled = this->semanticEnabled && checkKernelArgument(kBootArgGLFixSemanticMTL);
+    this->semanticMTLEnabled = this->semanticEnabled && !checkKernelArgument(kBootArgNoLegacyBlend)
+                               && checkKernelArgument(kBootArgGLFixSemanticMTL);
 
     this->vdaEnabled = checkKernelArgument(kBootArgVDA)
                        || checkKernelArgument(kBootArgAVC)
                        || checkKernelArgument(kBootArgAVCEncode);
 
     this->submitGuardEnabled = !checkKernelArgument(kBootArgNoSubmitGuard);
+    this->legacyBlendEnabled = !checkKernelArgument(kBootArgNoLegacyBlend);
+    // Both default on. Explicit enable flags are accepted; explicit disables always win.
+    (void)checkKernelArgument(kBootArgSubmitGuard);
+    (void)checkKernelArgument(kBootArgLegacyBlend);
 
-    if (!this->enabled && !this->vdaEnabled && !this->submitGuardEnabled) {
+    if (!this->enabled && !this->vdaEnabled && !this->submitGuardEnabled && !this->legacyBlendEnabled) {
         DBGLOG("UserPatch", "User-space driver patches are disabled");
         return;
     }
@@ -463,7 +604,7 @@ void UserPatches::selectPatchSet()
         for (auto& applied : this->signatureApplied) { applied = 0; }
         // A version range does not prove the exact page will match. Keep both semantic
         // paths available until an exact rendering page has actually been applied.
-        if (this->semanticEnabled) { this->semanticMTLEnabled = true; }
+        if (this->semanticEnabled) { this->semanticMTLEnabled = this->legacyBlendEnabled; }
         SYSLOG("UserPatch", "Selected patch set \"%s\" for macOS %u.%u / APU mask 0x%02X", set.name,
                version.major(), version.minor(), apus);
         return;
@@ -486,19 +627,25 @@ void UserPatches::selectPatchSet()
         this->signatures     = kResolverSignatures;
         this->signatureCount = kResolverSignatureCount;
         for (auto& applied : this->signatureApplied) { applied = 0; }
-    } else {
+    } else if (getKernelVersion() >= KernelVersion::Sonoma) {
         SYSLOG("UserPatch", "Fallback: selecting macOS 14 (Sonoma) GL/Metal patch set");
         this->patches        = kGLDriverPatches_Sonoma;
         this->patchCount     = kGLDriverPatchCount_Sonoma;
         this->signatures     = kResolverSignatures_Sonoma;
         this->signatureCount = kResolverSignatureCount_Sonoma;
         for (auto& applied : this->signatureApplied) { applied = 0; }
+    } else {
+        this->patches = kGLDriverPatches_Ventura;
+        this->patchCount = kGLDriverPatchCount_Ventura;
+        this->signatures = kResolverSignatures_Ventura;
+        this->signatureCount = kResolverSignatureCount_Ventura;
+        for (auto& applied : this->signatureApplied) { applied = 0; }
     }
 
     // No version-matched patch set: retain the OS-family exact tables above, then allow the
     // semantic Metal groups to handle a driver whose full page images do not match.
     if (this->semanticEnabled && !this->semanticMTLEnabled) {
-        this->semanticMTLEnabled = true;
+        this->semanticMTLEnabled = this->legacyBlendEnabled;
         SYSLOG("UserPatch", "Semantic Metal fallback enabled because no exact patch set matched");
     }
 }
@@ -517,7 +664,7 @@ void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t
 
 void UserPatches::processPatcher(KernelPatcher& patcher)
 {
-    if (this->submitGuardEnabled) {
+    if (this->submitGuardEnabled || this->legacyBlendEnabled) {
         this->installSubmitGuard(patcher);
     }
 
@@ -550,6 +697,13 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
         this->signatureCount  = 0;
     }
 
+    const auto darwin = currentKernelVersion().major();
+    this->pageLocalGL = glEnabled && darwin >= 23 && darwin <= 25;
+    if (this->pageLocalGL) {
+        UserOpenGL::init(darwin, NRed::singleton().getDeviceID(),
+                         this->resolverEnabled || this->semanticEnabled, this->resolverOnly);
+    }
+
     // Build the native page list from whichever tables are enabled.  The VDA tables only exist on macOS 11
     // and newer, where the native backend is the one being used.  The profile is the single source of truth
     // for the target: a VCN 2.x device whose profile enables the engine may receive the user-space VA tables
@@ -568,6 +722,8 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
         auto append = [this](const PagePatch* const table, const size_t count, const bool vda)
         {
             for (size_t i = 0; i < count && this->nativePatchCount < kMaxNativePatches; ++i) {
+                if (!vda && !table[i].glDriver && !this->legacyBlendEnabled) { continue; }
+                if (this->pageLocalGL && !vda && table[i].glDriver && !table[i].exactOnly) { continue; }
                 this->nativePatchIsVDA[this->nativePatchCount] = vda;
                 this->nativePatches[this->nativePatchCount++]   = table[i];
             }
@@ -578,9 +734,14 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
             for (size_t i = 0; i < this->vdaTableCount; ++i) {
                 append(this->vdaTables[i].table, this->vdaTables[i].count, true);
             }
+            // Only this exact Sequoia function/page has been verified. Keep the
+            // existing VDA/device/bridge gates and refuse nearby-page fallback.
+            if (currentKernelVersion().major() == 24) {
+                append(kVAEncodePitchPatches_Sequoia, arrsize(kVAEncodePitchPatches_Sequoia), true);
+            }
         }
 
-        if (this->nativePatchCount == 0) {
+        if (this->nativePatchCount == 0 && !this->pageLocalGL) {
             SYSLOG("UserPatch", "No user-space driver patches are configured, not installing any hooks");
             return;
         }
@@ -667,11 +828,14 @@ auto UserPatches::installNativePagePatcher(KernelPatcher& patcher) -> bool
     // The dyld shared cache and Apple protected pagers validate through the range variant.  The GL driver is
     // not part of the shared cache, so this is only registered when available and never treated as fatal.
     KernelPatcher::RouteRequest rangeRequest{"_cs_validate_range", wrapCsValidateRange, this->orgCsValidateRange};
+    UInt32 backends = 1;
     if (!patcher.routeMultipleLong(KernelPatcher::KernelID, &rangeRequest, 1)) {
         DBGLOG("UserPatch", "Failed to route _cs_validate_range, continuing without it (%d)",
                static_cast<int>(patcher.getError()));
         patcher.clearError();
     }
+    else { backends |= 2; }
+    if (this->pageLocalGL) { NRed::singleton().setProp32("NRedOpenGLBackends", backends); }
 
     DBGLOG("UserPatch", "Installed the native page patch backend for %zu page(s)", this->nativePageCount);
 
@@ -732,7 +896,13 @@ auto UserPatches::buildNativePatches() -> bool
             page = &this->nativePages[this->nativePageCount++];
             *page = NativePage{};
             page->image = patch.page;
+            page->glDriver = patch.glDriver;
             memcpy(&page->head, patch.page, sizeof(page->head));
+        }
+
+        if (page->glDriver != patch.glDriver) {
+            SYSLOG("UserPatch", "Conflicting file targets on a native page; refusing the table");
+            return false;
         }
 
         if (page->siteCount + patch.count > kMaxSitesPerPage) {
@@ -743,6 +913,7 @@ auto UserPatches::buildNativePatches() -> bool
         }
 
         page->vda = page->vda || this->nativePatchIsVDA[patchIndex];
+        page->exactOnly = page->exactOnly || patch.exactOnly;
         for (size_t siteIndex = 0; siteIndex < patch.count; siteIndex++) {
             auto& site   = page->sites[page->siteCount++];
             site.offset  = offsets[siteIndex];
@@ -752,7 +923,7 @@ auto UserPatches::buildNativePatches() -> bool
         }
     }
 
-    if (this->nativePageCount == 0) {
+    if (this->nativePageCount == 0 && !this->pageLocalGL) {
         SYSLOG("UserPatch", "No usable native page patches, each patch needs a 4096 byte page image and a valid site");
         return false;
     }
@@ -796,8 +967,9 @@ auto UserPatches::isPatchedPage(const NativePage& page, const UInt8* const data)
     return true;
 }
 
-void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOffset)
+void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOffset, void* const vnode)
 {
+    if (currentKernelVersion().major() == 22 || !this->isTargetVnode(vnode)) { return; }
     if (!this->resolverEnabled || this->signatures == nullptr || this->signatureCount == 0 || data == nullptr) {
         return;
     }
@@ -820,10 +992,14 @@ void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOf
             continue;
         }
 
+        // A lone Metal opcode/context is insufficient. Exact pages and the paired
+        // semantic planner own shared-cache Metal patches.
+        if (!signature.glDriver) { continue; }
         if (signature.context == nullptr || signature.mask == nullptr || signature.replace == nullptr) { continue; }
         if (signature.contextSize == 0 || signature.contextSize > kPageSize) { continue; }
         if (signature.patchOffset + signature.replaceSize > signature.contextSize) { continue; }
         if (signature.pageOffset != ~static_cast<UInt64>(0) && signature.pageOffset != pageOffset) { continue; }
+        if (signature.glDriver && !this->isGLDriverVnode(vnode)) { continue; }
 
         auto skip  = signature.skip;
         auto count = signature.count;
@@ -861,6 +1037,7 @@ void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOf
             }
 
             SYSLOG("UserPatch", "Resolver patched a signature site at page offset 0x%zX", offset);
+            if (signature.glDriver) { NRed::singleton().setProp32("NRedGLFixGLApplied", 1); }
             if (signatureIndex < kMaxSignatures) {
                 this->signatureApplied[signatureIndex]++;
             }
@@ -868,8 +1045,20 @@ void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOf
             if (--count == 0) { break; }
         }
 
-        DBGLOG("UserPatch", "Resolver: %zu site(s) still unmatched for signature %zu", count, signatureIndex);
     }
+}
+
+auto UserPatches::isTargetVnode(void* const vnode) const -> bool
+{
+    if (vnode == nullptr) { return false; }
+    const auto* name = vnode_getname(reinterpret_cast<vnode_t>(vnode));
+    if (name == nullptr) { return false; }
+    const bool target = strcmp(name, "AMDRadeonX5000GLDriver") == 0
+        || strcmp(name, "AMDRadeonVADriver") == 0 || strcmp(name, "AMDRadeonVADriver2") == 0
+        || strcmp(name, "AppleGVA") == 0 || (strncmp(name, "dyld_shared_cache_x86_64", 24) == 0
+            && (name[24] == 0 || name[24] == 'h' || name[24] == '.'));
+    vnode_putname(name);
+    return target;
 }
 
 auto UserPatches::isGLDriverVnode(void* const vnode) const -> bool
@@ -879,13 +1068,7 @@ auto UserPatches::isGLDriverVnode(void* const vnode) const -> bool
     const char* const name = vnode_getname(reinterpret_cast<vnode_t>(vnode));
     if (name == nullptr) { return false; }
 
-    const char* const needle = "AMDRadeonX5000GLDriver";
-    bool found = false;
-    for (size_t index = 0; name[index] != '\0' && !found; index++) {
-        size_t needleIndex = 0;
-        while (needle[needleIndex] != '\0' && name[index + needleIndex] == needle[needleIndex]) { needleIndex++; }
-        found = needle[needleIndex] == '\0';
-    }
+    const bool found = strcmp(name, "AMDRadeonX5000GLDriver") == 0;
 
     vnode_putname(name);
     return found;
@@ -1026,13 +1209,42 @@ auto UserPatches::patchSemanticPage(const void* const data, void* const vnode, c
     return patched;
 }
 
-void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffset, void* const vnode,
+__attribute__((noinline)) void UserPatches::patchGLBudgetPage(const void* const data, const UInt64 pageOffset)
+{
+    // Independent 512 MiB resource-list correction: keep its exact page and QA gates.
+    if (currentKernelVersion().major() != 24 || this->resolverOnly || pageOffset != 0x5000
+        || memcmp(data, kGLDriverBudgetPage_Sequoia, kPageSize) != 0) { return; }
+    constexpr size_t site = 0x6F9;
+    if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) { return; }
+    const bool fresh = memcmp(data, kGLDriverBudgetPage_Sequoia, kPageSize) == 0;
+    if (fresh) {
+        memcpy(const_cast<UInt8*>(static_cast<const UInt8*>(data)) + site,
+               kGLDriverBudgetReplace, sizeof(kGLDriverBudgetReplace));
+    }
+    bool restored = MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) == KERN_SUCCESS;
+    if (!restored && MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) == KERN_SUCCESS) {
+        restored = MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) == KERN_SUCCESS;
+    }
+    UserOpenGL::reportBudgetResult(fresh, restored);
+}
+
+__attribute__((noinline)) void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffset, void* const vnode,
                                   const bool cachePage)
 {
-    if (data == nullptr) { return; }
+    if (data == nullptr || !this->isTargetVnode(vnode)) { return; }
+    if (this->pageLocalGL && this->isGLDriverVnode(vnode)) {
+        // No legacy exact/context/semantic fallback after a new planner rejection.
+        // A cache pager must never masquerade as the standalone GL executable.
+        if (!cachePage) {
+            UserOpenGL::patchPage(data, pageOffset);
+            this->patchGLBudgetPage(data, pageOffset);
+        }
+        return;
+    }
 
     for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
         const auto& page = this->nativePages[pageIndex];
+        if (!page.vda && !page.glDriver && !this->legacyBlendEnabled) { continue; }
         // GL resolver QA must not suppress exact VA/AppleGVA patches.
         if (this->resolverOnly && !page.vda) { continue; }
 
@@ -1041,6 +1253,7 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
         UInt64 head{0};
         memcpy(&head, data, sizeof(head));
         if (head != page.head || memcmp(page.image, data, kPageSize) != 0) { continue; }
+        if (page.glDriver && !this->isGLDriverVnode(vnode)) { continue; }
 
         // VDA patches are only applied when the VCN bridge actually prepared both drivers and loaded X6000.
         // If it failed (ABI mismatch, X6000 load failure), the stock VA/GVA driver stays in place and decode
@@ -1079,6 +1292,10 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
         }
 
         DBGLOG("UserPatch", "Patched %zu site(s) in a user-space driver page", page.siteCount);
+        if (page.glDriver) {
+            NRed::singleton().setProp32("NRedGLFixGLApplied", 1);
+            SYSLOG("UserPatch", "GL driver exact page patched at file offset 0x%llX", pageOffset);
+        }
 
         if (!page.vda && !checkKernelArgument(kBootArgGLFixSemanticMTL)) {
             this->semanticEnabled = false;
@@ -1108,79 +1325,12 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
         if (this->isPatchedPage(this->nativePages[pageIndex], static_cast<const UInt8*>(data))) { return; }
     }
 
-    for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
-        auto& page = this->nativePages[pageIndex];
-        if (this->resolverOnly && !page.vda) { continue; }
-        if (page.siteCount == 0) { continue; }
-        bool allSitesMatch = true;
-        for (size_t siteIndex = 0; siteIndex < page.siteCount; siteIndex++) {
-            const auto& site = page.sites[siteIndex];
-            // Defensive re-validation of the registration-time invariants (see above): reject any site
-            // that could not be compared safely even if a future registration path bypassed the checks.
-            if (site.find == nullptr || site.size == 0 || site.size > kPageSize
-                || site.offset > kPageSize - site.size)
-            {
-                allSitesMatch = false;
-                break;
-            }
-            if (memcmp(static_cast<const UInt8*>(data) + site.offset, site.find, site.size) != 0) {
-                allSitesMatch = false;
-                break;
-            }
-            // A two- or three-byte instruction alone is not enough to identify a driver page.
-            // Preserve the site's surrounding code while allowing unrelated page bytes to differ.
-            const auto contextStart = site.offset > 16 ? site.offset - 16 : 0;
-            const auto contextEnd = site.offset + site.size + 16 < kPageSize
-                                        ? site.offset + site.size + 16 : kPageSize;
-            if (memcmp(static_cast<const UInt8*>(data) + contextStart, page.image + contextStart,
-                       contextEnd - contextStart) != 0) {
-                allSitesMatch = false;
-                break;
-            }
-        }
-        if (!allSitesMatch) { continue; }
-
-        if (page.vda && !VCNBridge::singleton().loadReady()) {
-            DBGLOG("UserPatch", "VDA page site-matched but the VCN bridge is not ready; leaving it unpatched");
-            continue;
-        }
-
-        if (page.vda && isFairPlayClient(current_task())) {
-            DBGLOG("UserPatch", "Skipping VDA patches for FairPlay client task (site fallback)");
-            continue;
-        }
-
-        if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) {
-            SYSLOG("UserPatch", "Failed to disable kernel write protection for site fallback");
-            return;
-        }
-
-        for (size_t siteIndex = 0; siteIndex < page.siteCount; siteIndex++) {
-            const auto& site = page.sites[siteIndex];
-            memcpy(const_cast<UInt8*>(static_cast<const UInt8*>(data)) + site.offset, site.replace, site.size);
-        }
-
-        if (MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) {
-            SYSLOG("UserPatch", "Failed to restore kernel write protection for site fallback");
-        }
-
-        if (!page.mismatchLogged) {
-            page.mismatchLogged = true;
-            SYSLOG("UserPatch",
-                   "Page %zu: stored image differed, but all %zu site contexts matched; site-patched successfully",
-                   pageIndex, page.siteCount);
-        }
-
-        if (page.vda) {
-            const auto applied = static_cast<UInt32>(OSIncrementAtomic(&this->vdaAppliedCount) + 1);
-            NRed::singleton().setProp32("NRedVCNUserApplied", applied);
-        }
-
-        return;
-    }
+    // No site-only fallback. Unknown pages remain stock; modern GL has its own
+    // whole-function/page-local planner and Metal uses verified paired semantics.
+    if (currentKernelVersion().major() == 22) { return; }
 
     if (this->resolverOnly) {
-        this->patchSignaturePage(data, pageOffset);
+        this->patchSignaturePage(data, pageOffset, vnode);
         return;
     }
 
@@ -1188,46 +1338,54 @@ void UserPatches::patchNativePage(const void* const data, const UInt64 pageOffse
     // This is what makes the GL fix work on macOS builds that have no page table entry.
     if (this->patchSemanticPage(data, vnode, cachePage)) { return; }
 
-    this->patchSignaturePage(data, pageOffset);
+    this->patchSignaturePage(data, pageOffset, vnode);
 }
 
-void UserPatches::wrapCsValidatePage(void* const vnode, void* const pager, const UInt64 pageOffset,
+__attribute__((noinline)) void UserPatches::wrapCsValidatePage(void* const vnode, void* const pager, const UInt64 pageOffset,
                                      const void* const data, int* const validated, int* const tainted, int* const nx)
 {
     FunctionCast(wrapCsValidatePage, singleton().orgCsValidatePage)(vnode, pager, pageOffset, data, validated, tainted,
                                                                     nx);
 
-    // Only patch pages that passed validation, so that a rejected page is never turned into a valid-looking one.
-    if (validated != nullptr && *validated != 0) { singleton().patchNativePage(data, pageOffset, vnode, false); }
+    // Preserve native outputs; accept boolean success or the x86 whole-page bitmap.
+    if (validated && (*validated == 1 || *validated == 0xF) && tainted && *tainted == 0
+        && nx && *nx == 0 && (pageOffset & (kPageSize - 1)) == 0) {
+        singleton().patchNativePage(data, pageOffset, vnode, false);
+    }
 }
 
-boolean_t UserPatches::wrapCsValidateRange(void* const vnode, void* const pager, const UInt64 pageOffset,
+__attribute__((noinline)) boolean_t UserPatches::wrapCsValidateRange(void* const vnode, void* const pager, const UInt64 pageOffset,
                                            const void* const data, const UInt64 dataSize, unsigned* const tainted)
 {
     const auto result = FunctionCast(wrapCsValidateRange, singleton().orgCsValidateRange)(vnode, pager, pageOffset,
                                                                                           data, dataSize, tainted);
 
-    if (result == 0 || data == nullptr) { return result; }
+    if (result == 0 || !tainted || *tainted != 0 || data == nullptr
+        || (pageOffset & (kPageSize - 1)) != 0 || dataSize > ~static_cast<UInt64>(0) - pageOffset) { return result; }
 
     const auto* const bytes = static_cast<const UInt8*>(data);
+    const bool cachePage = !singleton().isGLDriverVnode(vnode);
+    if (!cachePage && (pageOffset > UserOpenGL::MaxFileSize
+        || dataSize > UserOpenGL::MaxFileSize - pageOffset)) { return result; }
     for (size_t offset = 0; offset + kPageSize <= dataSize; offset += kPageSize) {
-        singleton().patchNativePage(bytes + offset, pageOffset + offset, vnode, true);
+        singleton().patchNativePage(bytes + offset, pageOffset + offset, vnode, cachePage);
     }
 
     return result;
 }
 
-int UserPatches::wrapSharedRegionCheck(proc_t process, void* args, int* returnValue)
+// Keep patching frames out of the chained native syscall, including optimized builds.
+__attribute__((noinline)) int UserPatches::wrapSharedRegionCheck(proc_t process, void* args, int* returnValue)
 {
     auto& patches = singleton();
     const auto result = FunctionCast(wrapSharedRegionCheck, patches.orgSharedRegionCheck)(process, args, returnValue);
-    if (result == 0 && patches.submitGuardEnabled && args != nullptr) {
+    if (result == 0 && (patches.submitGuardEnabled || patches.legacyBlendEnabled) && args != nullptr) {
         patches.applySubmitGuard(process, args);
     }
     return result;
 }
 
-void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
+__attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
 {
     if (getTaskMapFunc == nullptr || copyInFunc == nullptr || copyOutFunc == nullptr) {
         return;
@@ -1235,9 +1393,7 @@ void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
 
     const auto kernelMajor = currentKernelVersion().major();
     const auto methodOffset = UserSubmitGuardData::getMethodOffset(kernelMajor);
-    if (methodOffset == 0) {
-        return;
-    }
+    if (methodOffset == 0 && !this->legacyBlendEnabled) { return; }
 
     auto map = getTaskMapFunc(current_task());
     if (map == nullptr) {
@@ -1255,6 +1411,17 @@ void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
         }
     }
 
+    UInt8 cacheHeader[104]{};
+    if (base >= 0x800000000000ULL - methodOffset
+        || copyInFunc(reinterpret_cast<const void*>(base), cacheHeader, sizeof(cacheHeader)) != 0
+        || !UserSharedCacheData::matches(kernelMajor, cacheHeader)) {
+        NRed::singleton().setProp32("NRedSubmitGuardRejected", 1);
+        return;
+    }
+    // Independent of SubmitGuard installation success and repeated shared-region checks.
+    if (this->legacyBlendEnabled) { this->applyLegacyBlend(map, base, process); }
+    if (!this->submitGuardEnabled || methodOffset == 0) { return; }
+
     const auto method = base + methodOffset;
     UInt8 entry[UserSubmitGuardData::MethodPatchSize];
     if (copyInFunc(reinterpret_cast<const void*>(method), entry, sizeof(entry)) != 0) {
@@ -1263,7 +1430,9 @@ void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
 
     static constexpr UInt8 patchedPrefix[6] = {0xFF, 0x25, 0x00, 0x00, 0x00, 0x00};
     if (memcmp(entry, patchedPrefix, sizeof(patchedPrefix)) == 0) {
-        // Already patched in this process space.
+        if (!validSubmitGuardEntry(map, method, entry)) {
+            NRed::singleton().setProp32("NRedSubmitGuardRejected", 2);
+        }
         return;
     }
 
@@ -1288,8 +1457,15 @@ void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
         return;
     }
 
+    if (!userBytesEqual(page, payload, sizeof(payload))) {
+        vm_deallocate(map, page, PAGE_SIZE);
+        return;
+    }
     result = vm_protect(map, page, PAGE_SIZE, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
-    if (result != KERN_SUCCESS) {
+    // Seal only our new allocation. Existing cache pages retain their maximum rights
+    // so the verified entry rollback can still acquire a private writable copy.
+    if (result != KERN_SUCCESS
+        || vm_protect(map, page, PAGE_SIZE, TRUE, VM_PROT_READ | VM_PROT_EXECUTE) != KERN_SUCCESS) {
         vm_deallocate(map, page, PAGE_SIZE);
         return;
     }
@@ -1300,29 +1476,22 @@ void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
     const UInt64 target = page;
     memcpy(patch + 6, &target, sizeof(target));
 
-    const UInt64 methodPage = method & ~static_cast<UInt64>(PAGE_SIZE - 1);
-    vm_prot_t protection{VM_PROT_NONE};
-    if (!leafProtection(map, methodPage, protection)
-        || protection != (VM_PROT_READ | VM_PROT_EXECUTE)) {
+    UserCodeMemory memory{map};
+    vm_prot_t protection{VM_PROT_NONE}, maximum{VM_PROT_NONE};
+    if (!leafProtection(map, page, protection, &maximum)
+        || protection != (VM_PROT_READ | VM_PROT_EXECUTE)
+        || maximum != (VM_PROT_READ | VM_PROT_EXECUTE)) {
         vm_deallocate(map, page, PAGE_SIZE);
         return;
     }
-
-    result = vm_protect(map, methodPage, PAGE_SIZE, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-    if (result != KERN_SUCCESS) {
-        vm_deallocate(map, page, PAGE_SIZE);
+    const auto installed = UserCodePatch::write(memory, method, entry, patch, sizeof(patch));
+    if (!installed.applied) {
+        // A partially written entry might still reference this payload. Never leave it dangling.
+        if (installed.originalRestored) { vm_deallocate(map, page, PAGE_SIZE); }
+        NRed::singleton().setProp32("NRedSubmitGuardRejected", installed.originalRestored ? 3 : 4);
         return;
     }
-
-    const auto written = copyOutFunc(patch, reinterpret_cast<void*>(method), sizeof(patch));
-
-    // Restore protections: first current, then maximum
-    auto restored = vm_protect(map, methodPage, PAGE_SIZE, FALSE, protection);
-    if (restored == KERN_SUCCESS) {
-        vm_protect(map, methodPage, PAGE_SIZE, TRUE, protection);
-    }
-
-    if (written == 0 && restored == KERN_SUCCESS) {
+    {
         static volatile UInt32 appliedCounter{0};
         const auto count = static_cast<UInt32>(OSIncrementAtomic(&appliedCounter) + 1);
         NRed::singleton().setProp32("NRedSubmitGuardApplied", count);
@@ -1341,100 +1510,39 @@ void UserPatches::applySubmitGuard(proc_t process, void* rawArgs)
         }
     }
 
-    // Also apply Metal LegacyBlend / dual-quad fix to this dyld shared cache instance
-    this->applyLegacyBlend(map, base, process);
 }
 
-void UserPatches::applyLegacyBlend(vm_map_t map, mach_vm_offset_t base, proc_t process)
+__attribute__((noinline)) void UserPatches::applyLegacyBlend(vm_map_t map, mach_vm_offset_t base, proc_t process)
 {
     const auto kernelMajor = currentKernelVersion().major();
-    mach_vm_offset_t gateOffset = 0;
-    mach_vm_offset_t allowOffset = 0;
-
-    if (kernelMajor == 23) {
-        // macOS 14 Sonoma (Darwin 23)
-        // Gate (75 0B -> EB 0B) at 0x30354D1BCULL
-        // Allow (force DISABLE_DUAL_QUAD = 1: B0 01 90) at 0x30354D1DBULL
-        gateOffset = 0x30354D1BCULL;
-        allowOffset = 0x30354D1DBULL;
-    } else if (kernelMajor == 24) {
-        // macOS 15 Sequoia (Darwin 24)
-        gateOffset = 0x3087B3164ULL;
-        allowOffset = 0x3087B3185ULL;
-    } else if (kernelMajor == 25) {
-        // macOS 26 Tahoe (Darwin 25)
-        gateOffset = 0x310C77708ULL;
-    } else {
+    const UInt64 offset = kernelMajor == 22 ? 0x3000BC000ULL : kernelMajor == 23 ? 0x30354D000ULL : kernelMajor == 24 ? 0x3087B3000ULL
+                          : kernelMajor == 25 ? 0x310C77000ULL : 0;
+    if (offset == 0 || base >= 0x800000000000ULL - offset - PAGE_SIZE) { return; }
+    auto* pages = Buffer::create<UInt8>(2 * PAGE_SIZE);
+    if (pages == nullptr) { return; }
+    auto* observed = pages;
+    auto* target = pages + PAGE_SIZE;
+    UInt64 pageOffset{0};
+    size_t first{0}, size{0};
+    UserCodeMemory memory{map};
+    const auto address = base + offset;
+    if (!memory.isRX(address) || !memory.read(address, observed, PAGE_SIZE)
+        || !legacyBlendPlan(kernelMajor, observed, target, pageOffset, first, size) || pageOffset != offset) {
+        Buffer::deleter(pages);
+        NRed::singleton().setProp32("NRedLegacyBlendRejected", 1);
         return;
     }
-
-    const mach_vm_address_t gateAddr = base + gateOffset;
-    UInt8 gateBytes[2]{};
-    if (copyInFunc(reinterpret_cast<const void*>(gateAddr), gateBytes, sizeof(gateBytes)) != 0) {
+    const bool already = memcmp(observed, target, PAGE_SIZE) == 0;
+    const auto written = already ? UserCodePatch::Result{true, false}
+                                 : UserCodePatch::write(memory, address + first, observed + first,
+                                                       target + first, size);
+    Buffer::deleter(pages);
+    if (!written.applied) {
+        NRed::singleton().setProp32("NRedLegacyBlendRejected", written.originalRestored ? 2 : 3);
         return;
     }
-
-    bool needsGatePatch = false;
-    UInt8 targetGate[2]{0xEB, 0x0B};
-    if (kernelMajor == 23 || kernelMajor == 24) {
-        if (gateBytes[0] == 0x75 && gateBytes[1] == 0x0B) {
-            needsGatePatch = true;
-        } else if (gateBytes[0] == 0xEB && gateBytes[1] == 0x0B) {
-            // Already patched gate
-        } else {
-            return; // Unknown opcode, safely skip
-        }
-    } else if (kernelMajor == 25) {
-        targetGate[0] = 0xEB; targetGate[1] = 0x00;
-        if (gateBytes[0] == 0x74 && gateBytes[1] == 0x28) {
-            needsGatePatch = true;
-        }
-    }
-
-    bool needsAllowPatch = false;
-    UInt8 targetAllow[3] = {0xB0, 0x01, 0x90};
-    mach_vm_address_t allowAddr = 0;
-    if (allowOffset != 0) {
-        allowAddr = base + allowOffset;
-        UInt8 allowBytes[3]{};
-        if (copyInFunc(reinterpret_cast<const void*>(allowAddr), allowBytes, sizeof(allowBytes)) == 0) {
-            if ((allowBytes[0] == 0x31 && allowBytes[1] == 0xC0 && allowBytes[2] == 0x90) ||
-                (allowBytes[0] == 0x0F && allowBytes[1] == 0x93 && allowBytes[2] == 0xC0) ||
-                (allowBytes[0] == 0x0F && allowBytes[1] == 0x94 && allowBytes[2] == 0xC0)) {
-                needsAllowPatch = true;
-            }
-        }
-    }
-
-    if (!needsGatePatch && !needsAllowPatch) {
-        return;
-    }
-
-    const mach_vm_address_t pageAddr = gateAddr & ~static_cast<mach_vm_address_t>(PAGE_SIZE - 1);
-    vm_prot_t protection{VM_PROT_NONE};
-    if (!leafProtection(map, pageAddr, protection) || protection != (VM_PROT_READ | VM_PROT_EXECUTE)) {
-        return;
-    }
-
-    auto result = vm_protect(map, pageAddr, PAGE_SIZE, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
-    if (result != KERN_SUCCESS) {
-        return;
-    }
-
-    int writeErr = 0;
-    if (needsGatePatch) {
-        writeErr |= copyOutFunc(targetGate, reinterpret_cast<void*>(gateAddr), sizeof(targetGate));
-    }
-    if (needsAllowPatch && allowAddr != 0) {
-        writeErr |= copyOutFunc(targetAllow, reinterpret_cast<void*>(allowAddr), sizeof(targetAllow));
-    }
-
-    auto restored = vm_protect(map, pageAddr, PAGE_SIZE, FALSE, protection);
-    if (restored == KERN_SUCCESS) {
-        vm_protect(map, pageAddr, PAGE_SIZE, TRUE, protection);
-    }
-
-    if (writeErr == 0 && restored == KERN_SUCCESS) {
+    // Counts observations as well as writes; repeated shared-region checks remain idempotent.
+    {
         static volatile UInt32 blendCounter{0};
         const auto count = static_cast<UInt32>(OSIncrementAtomic(&blendCounter) + 1);
         NRed::singleton().setProp32("NRedLegacyBlendApplied", count);
@@ -1457,7 +1565,7 @@ void UserPatches::applyLegacyBlend(vm_map_t map, mach_vm_offset_t base, proc_t p
 bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
 {
     const auto kernelMajor = currentKernelVersion().major();
-    if (kernelMajor != 23 && kernelMajor != 24 && kernelMajor != 25) {
+    if (kernelMajor != 22 && kernelMajor != 23 && kernelMajor != 24 && kernelMajor != 25) {
         DBGLOG("UserPatch", "SubmitGuard not supported on Darwin %u", kernelMajor);
         return false;
     }
@@ -1484,11 +1592,12 @@ bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
         return false;
     }
 
-    NRed::singleton().setProp32("NRedSubmitGuardEnabled", 1);
-    NRed::singleton().setProp32("NRedSubmitGuardVersion", 1);
-    NRed::singleton().setProp32("NRedLegacyBlendEnabled", 1);
-    NRed::singleton().setProp32("NRedLegacyBlendVersion", 1);
-    SYSLOG("UserPatch", "SubmitGuard and LegacyBlend enabled for Darwin %u (offset 0x%llX)", kernelMajor,
+    NRed::singleton().setProp32("NRedSubmitGuardSupported", UserSubmitGuardData::getMethodOffset(kernelMajor) != 0 ? 1 : 0);
+    NRed::singleton().setProp32("NRedSubmitGuardEnabled", this->submitGuardEnabled && UserSubmitGuardData::getMethodOffset(kernelMajor) != 0 ? 1 : 0);
+    NRed::singleton().setProp32("NRedSubmitGuardVersion", 2);
+    NRed::singleton().setProp32("NRedLegacyBlendEnabled", this->legacyBlendEnabled ? 1 : 0);
+    NRed::singleton().setProp32("NRedLegacyBlendVersion", 2);
+    SYSLOG("UserPatch", "Shared-cache controls for Darwin %u (verified submit offset 0x%llX)", kernelMajor,
            UserSubmitGuardData::getMethodOffset(kernelMajor));
     return true;
 }

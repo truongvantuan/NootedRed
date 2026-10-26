@@ -53,6 +53,10 @@ class VCNBridge
     bool engineAllocated{false};
     bool noGfxOff{false};
     bool gfxOffHeld{false};
+    bool noDrain{false};
+    void* vcnEngine{nullptr};
+    mach_vm_address_t vcnIsIdle{0};
+    UInt32 drainCount{0}, drainTimeouts{0}, lastWaitMs{0}, maxWaitMs{0};
 
     mach_vm_address_t orgAcceleratorStart{0};
     mach_vm_address_t orgAcceleratorStop{0};
@@ -121,5 +125,6 @@ private:
     static bool          initHardware(void* self, UInt32 channel);
     static void          noopEnableGfxOff(void* self);
     void                 holdGfxOff();
+    void                 drainVCN(const char* reason);
     static OSMetaClassBase* safeMetaCast(const OSMetaClassBase* object, const OSMetaClass* target);
 };

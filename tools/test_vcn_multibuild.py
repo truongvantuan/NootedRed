@@ -75,6 +75,9 @@ int main() {
         assert(!VCNData::findVariant(c.build, c.major, 7));
         assert(!VCNData::findVariant(c.build, c.major == 23 ? 24 : 23, 6));
     }
+    assert(VCNData::findVariant("22G513",22,6)->id==10);
+    assert(!VCNData::findVariant("22G514",22,6));
+    assert(!VCNData::findVariant("22H730",22,6));
     assert(!VCNData::findVariant("24F100", 24, 6));
     assert(!VCNData::findVariant("23K100", 23, 6));
     assert(!VCNData::findVariant("25H100", 25, 6));
@@ -162,7 +165,7 @@ def parse_page_patches(text: str, label: str) -> tuple[int, int, set[str]]:
 
 
 def main() -> int:
-    tables = [("24H32", KERNEL_DATA_24H32), ("23J631", KERNEL_DATA_23J631),
+    tables = [("22G513", ROOT / "NootedRed/VCNData/22G513.hpp"), ("24H32", KERNEL_DATA_24H32), ("23J631", KERNEL_DATA_23J631),
               ("25G241", ROOT / "NootedRed/VCNData/25G241.hpp")]
     parsed = []
     for build, path in tables:
@@ -182,7 +185,7 @@ def main() -> int:
     for token in ("findVariant", "variantForDarwin", "hasVariantForDarwin", "kMaxCallPatches"):
         if token not in data_text:
             raise Failure(f"VCNData.hpp is missing {token!r}")
-    for token in ("Build23J631::kData", "Build24H32::kData", "Build25G241::kData",
+    for token in ("Build22G513::kData", "Build23J631::kData", "Build24H32::kData", "Build25G241::kData",
                   "Build23H::kData", "Build23G::kData", "Build23J::kData", "Build24H::kData",
                   "Build24G::kData", "Build25G::kData", "buildPrefix", "buildMatches", "osversion[i] == '\\0'"):
         if token not in selector_text:
@@ -199,6 +202,8 @@ def main() -> int:
     print("bridge: exact-build VCNData lookup present")
 
     page_cases = {
+        "Ventura VA": (ROOT / "NootedRed/VDAVADataVentura.hpp", "13.6.4", 8, 11),
+        "Ventura GVA": (ROOT / "NootedRed/VDAGVADataVentura.hpp", "13.6.4", 1, 1),
         "Sequoia VA": (ROOT / "NootedRed" / "VDAVAData.hpp", "15.8.1", 9, 12),
         "Sonoma VA": (ROOT / "NootedRed" / "VDAVADataSonoma.hpp", "14.8.9", 9, 12),
         "Sequoia GVA": (ROOT / "NootedRed" / "VDAGVAData.hpp", "15.8.1", 1, 1),

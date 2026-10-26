@@ -49,8 +49,28 @@ jobs:
           python3 tools/test_patchset_selection.py
           python3 tools/test_gl_semantic_data.py
           python3 tools/test_patch_dispatch.py
+          python3 tools/test_gl_page_guard.py
+          python3 tools/build_opengl_patch.py --check
+          python3 tools/test_opengl_native.py
+          python3 tools/test_opengl_dynamic.py
+          python3 tools/test_opengl_owner.py
+          python3 tools/test_gl_validation.py
+          python3 tools/test_user_cache_patches.py
+          python3 tools/test_feature_verification.py
+          python3 tools/test_gpu_vm_trace.py
+          python3 tools/test_gpu_allocation_trace.py
+          python3 tools/test_gpu_allocation_capture.py
+          python3 tools/test_gl_api_decode.py
+          python3 tools/test_gl_budget.py
           python3 tools/test_vcn_multibuild.py
           python3 tools/test_video_modes.py
+          python3 tools/test_vcn_gfxoff.py
+          python3 tools/test_user_patch_installation.py
+          python3 tools/test_vcn_drain.py
+          python3 tools/test_hevc_main10_policy.py
+          python3 tools/test_heif_inspection.py
+          python3 tools/test_heif_export.py
+          python3 tools/test_vcn_encode_pitch.py
           python3 tools/test_dp_recovery.py
           python3 tools/test_atom_loop_guard.py
           python3 tools/test_atom_native_vm.py

@@ -38,16 +38,30 @@ without identifying a page from a short instruction alone. VDA pages require a r
 process pages are still patched; a one-shot diagnostic never suppresses subsequent patching. Resolver-only
 QA still skips rendering-page and semantic patches. Already-patched exact pages retain the fast path.
 
-Metal SubmitGuard is enabled by default on Darwin 23/24/25, independently of GLFIX/VDA. It verifies the
-known method prologue, installs the upstream PM4 tail-filler payload and publishes IORegistry markers.
+The official Weachy v1.0.0 GL site fallback was observed replacing `and rax,-2` with `or rax,1`
+inside NotificationCenter on macOS 15.8.1, leaving two threads in an endless loop. Our site-context
+check rejects that collision. GL page and resolver entries additionally require the exact
+`AMDRadeonX5000GLDriver` vnode name; the semantic backend uses the same exact-name guard.
+Unknown or similarly named executables are rejected. Metal and VDA tables retain their existing
+matching rules. Successful GL page/resolver writes publish `NRedGLFixGLApplied=1`; exact GL writes
+also log the file offset. Routine resolver scan misses no longer flood the debug log.
+`tools/test_gl_page_guard.py` executes the production matching paths against the captured failing
+instruction context and real GL reference pages, including successful exact/context/resolver cases.
+This does not establish GPU rendering or boot stability; those require the rebuilt kext at runtime.
+
+Metal SubmitGuard is enabled by default on Darwin 23/24/25, independently of GLFIX/VDA. Its fixed-offset
+installer requires the known shared-cache UUID and method prologue, installs and verifies the upstream
+PM4 tail-filler payload, restores partial writes and publishes IORegistry markers.
 `-NRedNoSubmitGuard` opts out. The PM4 compute submission vtable overwrite is paused, matching both
 upstreams' Quick Look/Metal hang investigation. Neither change is hardware-validated in this fork yet.
 
 The 1.0.0 update corrects the shared-region syscall wrapper to forward process, argument and return-value
 pointers, and reads the process's shared-cache base before applying SubmitGuard. Its new LegacyBlend
-patch runs from that SubmitGuard path, independently of GLFIX, using Darwin-specific offsets and opcode
-checks to address Metal dropdown rendering. `-NRedNoSubmitGuard` disables both. LegacyBlend is skipped
-when the SubmitGuard path returns early, including when SubmitGuard is already installed. The existing
+patch runs from that SubmitGuard path, independently of GLFIX, using Darwin-specific reference pages.
+`-NRedNoSubmitGuard` disables both. Local v2 corrections run LegacyBlend even on repeated SubmitGuard
+checks, reject full-page mismatches and preserve the downstream RBPlus predicate on Sonoma/Sequoia.
+The upstream dynamic allow offsets were inside unrelated instructions. Exact, semantic and resolver
+paths now use the same gate-only strategy on those two OS families. Tahoe retains its gate/allow pair. The existing
 GLFIX exact-page, semantic and signature paths remain available. FairPlay-entitled tasks now skip VDA
 patches in both the exact-page and contextual-site paths. These changes require hardware validation.
 
@@ -110,6 +124,8 @@ python3 tools/test_patch_data.py
 python3 tools/test_patchset_selection.py
 python3 tools/test_gl_semantic_data.py
 python3 tools/test_patch_dispatch.py
+python3 tools/test_gl_page_guard.py
+python3 tools/test_user_cache_patches.py
 python3 tools/test_vcn_multibuild.py
 python3 tools/test_video_modes.py
 python3 tools/test_dp_recovery.py
@@ -149,3 +165,22 @@ git merge xiaot-evo/master
 
 Resolve overlaps against this combined behavior, retain compiler/CI fixes, and run the checks. If a
 source is rewritten, compare old/new snapshots before merging. `origin` remains your own repository.
+
+Current release-feature requirements, local corrections and hardware evidence are maintained in
+[Weachy-Feature-Verification.md](Weachy-Feature-Verification.md). Prior build/boot results above do not
+verify the new v2 cache-patch installer; it requires the staged new build and physical reboot.
+# 25 October conditional OpenGL candidate
+
+The latest built candidate adapts the pinned Steve page-local SE/CU and
+conditional DualQuad planner through our existing validation hooks. It preserves
+the separate 512 MiB budget correction, current boot arguments and tested
+Metal/VCN policies. See [migration and RELEASE evidence](OpenGL-Migration-20261025.md)
+for the exact build identity, regression scope and pending hardware acceptance.
+
+## Weachy v1.1.1 adaptation (2026-10-26)
+
+The local working tree includes the reviewed v1.1.1 adaptation, pinned to `d7f2ec9`,
+while retaining the conditional OpenGL owner, budget/pitch corrections, guarded rollback
+and opt-in GFXOFF hold. RELEASE/DEBUG artifacts are built; hardware validation is pending.
+See [migration decisions and limits](Weachy-v1.1.1-Migration-20261026.md), including the
+mixed Ventura reference builds and the deliberately inactive unverified Ventura SubmitGuard address.

@@ -22,6 +22,7 @@
 
 #include <VCNData.hpp>
 #include <VCNData/14_7.hpp>
+#include <VCNData/22G513.hpp>
 #include <VCNData/23J631.hpp>
 #include <VCNData/24H32.hpp>
 #include <VCNData/25G241.hpp>
@@ -31,6 +32,7 @@ namespace
 {
 
     const VCNData::Variant* const kVariants[] = {
+        &VCNData::Build22G513::kData,
         &VCNData::Build23J631::kData,
         &VCNData::Build23J::kData,
         &VCNData::Build23H::kData,

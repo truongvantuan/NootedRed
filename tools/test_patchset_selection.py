@@ -87,7 +87,7 @@ def main() -> None:
         (23, 6, 0, "14.x / Sonoma gfx9 APU"),
         (23, 99, PICASSO, "14.x / Sonoma gfx9 APU"),
         (23, 100, RENOIR, None),
-        (22, 6, RENOIR, None),
+        (22, 6, RENOIR, "13.x / Ventura gfx9 APU"),
     ]
     for major, minor, apus, expected in cases:
         got = select(major, minor, apus)

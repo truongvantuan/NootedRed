@@ -85,6 +85,8 @@ MacKernelSDK
 # ---------------------------------------------------------------------------
 .vscode/
 .idea/
+xcuserdata/
+*.xcuserstate
 *.swp
 *.swo
 *.orig

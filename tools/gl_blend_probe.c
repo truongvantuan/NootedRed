@@ -17,9 +17,8 @@
  * (SIGSEGV, ~/Library/Logs/DiagnosticReports/glblend2-2026-10-18-211253.ips)
  * and WindowServer GPU resets were logged around the same time. Therefore:
  *   - the DEFAULT mode is --inspect (context + glGetString only, no drawing);
- *   - --render refuses to run unless --yes is passed, and only draws after a
- *     PBuffer drawable has been attached (a missing drawable is what made the
- *     earlier probe crash in glClear);
+ *   - --render refuses to run unless --yes is passed, and only draws into a
+ *     complete texture-backed FBO. PBuffers are unsupported with core profiles;
  *   - do NOT run --render without the Lead's explicit approval and a recovery
  *     plan (see analysis/repro-plan.md and tools/README.md).
  *
@@ -31,7 +30,7 @@
  *   --link               inspect + compile/link the single- and dual-source
  *                        fragment shaders and bind frag data locations.
  *                        No draw calls are issued.
- *   --render             link + attach PBuffer drawable + FBO + clear/draw/
+ *   --render             link + complete FBO + clear/draw/
  *                        glReadPixels + CPU comparison. Requires --yes.
  *
  * Exit codes:
@@ -40,8 +39,6 @@
  *   2   shader compile/link failure (harness problem, not a render result)
  *   3   FBO incomplete
  *   10  at least one rendered pixel test MISMATCHed
- *   11  render mode unavailable (PBuffer drawable could not be attached);
- *       no clear/draw was attempted
  *   12  render refused without --yes
  *   124 render watchdog fired (SIGALRM)
  *   128+N terminated by signal N (SIGSEGV=139, SIGBUS=138, SIGABRT=134)
@@ -416,6 +413,8 @@ static bool runRenderCases(GLuint solidProgram, GLuint alphaProgram, GLuint dual
 
     ExpectedPixel expSolid = expectedOver(red, blue, opaque);
     ExpectedPixel expAlpha = expectedOver(red, blue, halfFactor);
+    // glBlendFuncSeparate uses ONE/ZERO for alpha: preserve the shader's 0.5.
+    expAlpha.rgba[3] = quantize(0.5);
 
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
@@ -480,22 +479,28 @@ static bool runRenderCases(GLuint solidProgram, GLuint alphaProgram, GLuint dual
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glFinish();
 
-        unsigned char got[4] = {0, 0, 0, 0};
-        glReadPixels(PROBE_WIDTH / 2, PROBE_HEIGHT / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, got);
+        unsigned char pixels[PROBE_WIDTH * PROBE_HEIGHT * 4] = {0};
+        glReadPixels(0, 0, PROBE_WIDTH, PROBE_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        const unsigned char* got = pixels + (PROBE_HEIGHT / 2 * PROBE_WIDTH + PROBE_WIDTH / 2) * 4;
 
         int worst = 0;
-        bool ok = pixelMatches(got, cases[i].expected, cases[i].checkAlpha, &worst);
+        bool ok = true;
+        for (size_t pixel = 0; pixel < PROBE_WIDTH * PROBE_HEIGHT; ++pixel) {
+            int delta = 0;
+            if (!pixelMatches(pixels + pixel * 4, cases[i].expected, cases[i].checkAlpha, &delta)) {
+                ok = false;
+            }
+            if (delta > worst) { worst = delta; }
+        }
         printf("  %s  %-40s got (%3u,%3u,%3u,%3u) expect (%3u,%3u,%3u,%3u) maxdelta=%d\n",
                ok ? "PASS" : "FAIL", cases[i].name, got[0], got[1], got[2], got[3],
                cases[i].expected.rgba[0], cases[i].expected.rgba[1], cases[i].expected.rgba[2],
                cases[i].expected.rgba[3], worst);
         ++ran;
-        if (!ok) {
+        if (!reportGlError(cases[i].name) || !ok) {
             ++failures;
-        }
-
-        if (!reportGlError(cases[i].name)) {
-            // Keep going: a GL error is informative but not necessarily fatal.
+            printf("  stopping after the first failed case\n");
+            break;
         }
     }
 
@@ -514,6 +519,7 @@ static bool runRenderCases(GLuint solidProgram, GLuint alphaProgram, GLuint dual
 
 int main(int argc, char** argv)
 {
+    setbuf(stdout, NULL);
     if (!parseArgs(argc, argv)) {
         return 1;
     }
@@ -530,9 +536,8 @@ int main(int argc, char** argv)
 
     printf("gl_blend_probe: mode=%s\n", wantRender ? "render" : (wantLink ? "link" : "inspect"));
 
-    // Pixel format attributes. The PBuffer attribute is only requested for the
-    // render path: it is what lets us attach a *valid* offscreen drawable, which
-    // the earlier crash probe was missing.
+    // Core-profile offscreen rendering uses FBOs. Deprecated PBuffer attributes
+    // are rejected by CGLChoosePixelFormat with this profile.
     CGLPixelFormatAttribute attrs[16];
     int n = 0;
     attrs[n++] = kCGLPFAAccelerated;
@@ -542,9 +547,6 @@ int main(int argc, char** argv)
     attrs[n++] = (CGLPixelFormatAttribute)32;
     attrs[n++] = kCGLPFAAlphaSize;
     attrs[n++] = (CGLPixelFormatAttribute)8;
-    if (wantRender) {
-        attrs[n++] = kCGLPFAPBuffer;
-    }
     attrs[n] = (CGLPixelFormatAttribute)0;
 
     CGLPixelFormatObj pixelFormat = NULL;
@@ -669,28 +671,9 @@ int main(int argc, char** argv)
     }
 
     // ---------------- render path (risky) ----------------
-    printf("\n[render] RISK PATH: attaching PBuffer drawable before any clear/draw\n");
-    CGLPBufferObj pbuffer = NULL;
-    error = CGLCreatePBuffer(PROBE_WIDTH, PROBE_HEIGHT, GL_TEXTURE_2D, GL_RGBA, 0, &pbuffer);
-    if (error != kCGLNoError || pbuffer == NULL) {
-        fprintf(stderr, "CGLCreatePBuffer failed: %s (%d)\n", CGLErrorString(error), (int)error);
-        CGLSetCurrentContext(NULL);
-        CGLDestroyContext(context);
-        CGLDestroyPixelFormat(pixelFormat);
-        return 11;
-    }
-    error = CGLSetPBuffer(context, pbuffer, 0, 0, 0);
-    if (error != kCGLNoError) {
-        fprintf(stderr, "CGLSetPBuffer failed: %s (%d) - refusing to clear/draw without a drawable\n",
-                CGLErrorString(error), (int)error);
-        CGLDestroyPBuffer(pbuffer);
-        CGLSetCurrentContext(NULL);
-        CGLDestroyContext(context);
-        CGLDestroyPixelFormat(pixelFormat);
-        return 11;
-    }
-    CGLFlushDrawable(context);
-    reportGlError("PBuffer drawable attach");
+    printf("\n[render] RISK PATH: creating a texture-backed FBO before clear/draw\n");
+    printf("[render] watchdog: %u s\n", timeoutSeconds);
+    alarm(timeoutSeconds);
 
     GLuint texture = 0;
     glGenTextures(1, &texture);
@@ -704,19 +687,19 @@ int main(int argc, char** argv)
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    const GLenum colorAttachment = GL_COLOR_ATTACHMENT0;
+    glDrawBuffers(1, &colorAttachment);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         fprintf(stderr, "FBO incomplete; refusing to draw\n");
         glDeleteFramebuffers(1, &fbo);
         glDeleteTextures(1, &texture);
-        CGLDestroyPBuffer(pbuffer);
         CGLSetCurrentContext(NULL);
         CGLDestroyContext(context);
         CGLDestroyPixelFormat(pixelFormat);
         return 3;
     }
 
-    printf("[render] watchdog: %u s\n", timeoutSeconds);
-    alarm(timeoutSeconds);
     bool passed = runRenderCases(solidProgram, alphaProgram, dualProgram, dualAlphaProgram, fbo,
                                  texture, dualSupported);
     alarm(0);
@@ -735,7 +718,6 @@ int main(int argc, char** argv)
     if (dualAlphaProgram != 0) {
         glDeleteProgram(dualAlphaProgram);
     }
-    CGLDestroyPBuffer(pbuffer);
     CGLSetCurrentContext(NULL);
     CGLDestroyContext(context);
     CGLDestroyPixelFormat(pixelFormat);

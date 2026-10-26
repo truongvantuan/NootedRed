@@ -252,6 +252,8 @@ def main() -> None:
         add_text(root, f"ioreg-{class_name}.txt",
                  filter_ioreg(run(["ioreg", "-lw0", "-c", class_name]), (class_name, "IOClass")))
     add_text(root, "coremedia-defaults.txt", run(["defaults", "read", "com.apple.coremedia"]))
+    add_text(root, "coremedia-system-defaults.txt",
+             run(["defaults", "read", "/Library/Preferences/com.apple.coremedia"]))
     add_text(root, "videotoolbox-ffmpeg.txt", run(["ffmpeg", "-hide_banner", "-hwaccels"]))
 
     # GL driver bundle

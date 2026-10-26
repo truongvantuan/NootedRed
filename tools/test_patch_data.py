@@ -25,13 +25,13 @@ HEX_BYTE_RE = re.compile(r"0x([0-9A-Fa-f]{2})")
 
 PATCH_ROW_RE = re.compile(
     r"\{\s*UserPatcher::FileSegment::SegmentTextText\s*,\s*"
-    r"(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\d+)\s*\}",
+    r"(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*(?:true|false)\s*){0,2}\}",
     re.S,
 )
 
 SIGNATURE_ROW_RE = re.compile(
     r"\{\s*(\w+)\s*,\s*(\w+)\s*,\s*sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\w+)\s*,\s*"
-    r"sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(0x[0-9A-Fa-f]+|~static_cast<UInt64>\(0\))\s*\}",
+    r"sizeof\((\w+)\)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(0x[0-9A-Fa-f]+|~static_cast<UInt64>\(0\))\s*(?:,\s*(?:true|false)\s*)?\}",
     re.S,
 )
 
@@ -95,10 +95,18 @@ def check_page_patches(arrays, text):
         for name in (page_name, find_name, replace_name):
             check(name in arrays, f"PagePatch references unknown array {name}")
         find, replace, page = arrays[find_name], arrays[replace_name], arrays[page_name]
+        if find_name == "kVAEncodePitchFind":
+            check(re.findall(r"\b(true|false)\b",row.group())==["false","true"],
+                  "VA encode pitch replacement requires an exact-only page")
+        if find_name.startswith("kGLDriver"):
+            flags=re.findall(r"\b(true|false)\b",row.group())
+            check(flags and flags[0]=="true", f"{page_name}: missing GL vnode guard")
+            if find_name=="kGLDriverBudgetFind":
+                check(flags==["true","true"], "Budget function replacement must remain exact-only")
         check(size_name == find_name, f"sizeof({size_name}) should refer to {find_name}")
         check(len(page) == 0x1000, f"{page_name} must be exactly one 4 KiB page (got {len(page)})")
         check(len(find) == len(replace), f"{find_name}/{replace_name} sizes differ")
-        check(0 < len(find) <= 32, f"{find_name} size {len(find)} is not 1..32")
+        check(0 < len(find) <= 64, f"{find_name} size {len(find)} is not 1..64")
         check(count > 0, f"{find_name} count is zero")
         key = (page_name, bytes(find))
         check(key not in seen, f"duplicate PagePatch ({page_name}, {find_name})")
@@ -112,7 +120,7 @@ def check_page_patches(arrays, text):
 
 
 def signature_page_name(arrays, page_offset, context_name):
-    family = "Sonoma" if context_name.endswith("_Sonoma") else "Tahoe" if context_name.endswith("_Tahoe") else "Sequoia"
+    family = "Ventura" if context_name.endswith("_Ventura") else "Sonoma" if context_name.endswith("_Sonoma") else "Tahoe" if context_name.endswith("_Tahoe") else "Sequoia"
     if page_offset.startswith("~"):
         stem = "kMTLControlPage"
     else:
@@ -144,6 +152,8 @@ def check_signatures(arrays, text):
         find_name = replace_name.replace("Replace", "Find")
         check(find_name != replace_name and find_name in arrays, f"missing {find_name} for {replace_name}")
         find = arrays[find_name]
+        if find_name.startswith("kGLDriver"):
+            check(re.search(r",\s*true\s*\}$", row.group()), f"{context_name}: missing GL vnode guard")
         check(len(find) == len(replace), f"{find_name}/{replace_name} sizes differ")
 
         page_name = signature_page_name(arrays, page_offset, context_name)

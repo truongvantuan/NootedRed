@@ -39,11 +39,24 @@
 #include <DeviceProfile.hpp>
 #include <VCNBridge.hpp>
 #include <VDA.hpp>
+#include <CompatTarget.hpp>
+#include <GPUVMTraceData.hpp>
+#include <GPUAllocationTraceData.hpp>
+#include <IOKit/IOLocks.h>
+#include <libkern/OSDebug.h>
+#include <libkern/OSAtomic.h>
 #include <libkern/OSTypes.h>
 #include <libkern/c++/OSObject.h>
 #include <mach/i386/vm_param.h>
 #include <mach/i386/vm_types.h>
 #include <mach/kern_return.h>
+#include <kern/thread.h>
+
+extern "C" {
+    int proc_pid(proc_t);
+    void proc_name(int, char*, int);
+    proc_t current_proc(void);
+}
 
 static const UInt8 kChannelTypesPattern[] = {0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00,
                                              0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00};
@@ -165,6 +178,8 @@ void X5000::processKext(KernelPatcher& patcher, const size_t id, const mach_vm_a
     if (kextRadeonX5000.loadIndex != id) { return; }
 
     NRed::singleton().hwLateInit();
+    this->installVMTrace(patcher, id, slide, size);
+    this->installAllocationTrace(patcher, id, slide, size);
 
     UInt32*           orgChannelTypes;
     mach_vm_address_t orgStartHWEngines;
@@ -405,6 +420,157 @@ UInt64 X5000::wrapAdjustVRAMAddress(void* const self, const UInt64 addr)
 }
 
 UInt32 X5000::returnZero() { return 0; }
+
+#include <X5000AllocationTrace.inc>
+
+void X5000::installVMTrace(KernelPatcher& patcher, const size_t id, const mach_vm_address_t slide,
+                          const size_t size)
+{
+    if (!checkKernelArgument("-NRedVMTrace")) { return; }
+    NRed::singleton().setProp32("NRedVMTraceRequested", 1);
+    NRed::singleton().setProp32("NRedVMTraceVersion", GPUVMTraceData::Version);
+    CompatTarget::Identity identity{};
+    if (currentKernelVersion().major() != 24
+        || !CompatTarget::parseMachOIdentity(identity, reinterpret_cast<const UInt8*>(slide), size)
+        || memcmp(identity.uuid, GPUVMTraceData::DriverUUID, sizeof(identity.uuid)) != 0) {
+        NRed::singleton().setProp32("NRedVMTraceRejected", 1);
+        return;
+    }
+    PenguinWizardry::PatternRouteRequest requests[] = {
+        {GPUVMTraceData::Methods[0].symbol, traceAssignGPUVirtualAddress, this->orgAssignGPUVirtualAddress},
+        {GPUVMTraceData::Methods[1].symbol, traceCommitGPUPageTable, this->orgCommitGPUPageTable},
+        {GPUVMTraceData::Methods[2].symbol, traceUpdateGPUPageTable, this->orgUpdateGPUPageTable},
+        {GPUVMTraceData::Methods[3].symbol, traceMapGPUVirtualRange, this->orgMapGPUVirtualRange},
+        {GPUVMTraceData::Methods[4].symbol, traceGetPTEValue, this->orgGetPTEValue},
+    };
+    static_assert(arrsize(requests) == arrsize(GPUVMTraceData::Methods));
+    // Check all identities, ranges and prefixes before installing any diagnostic hook.
+    for (size_t i = 0; i < arrsize(requests); i++) {
+        const auto address = patcher.solveSymbol(id, requests[i].symbol, slide, size, true);
+        patcher.clearError();
+        if (size < sizeof(GPUVMTraceData::Methods[i].prefix) || address < slide
+            || address - slide > size - sizeof(GPUVMTraceData::Methods[i].prefix)
+            || memcmp(reinterpret_cast<const void*>(address), GPUVMTraceData::Methods[i].prefix,
+                      sizeof(GPUVMTraceData::Methods[i].prefix)) != 0) {
+            NRed::singleton().setProp32("NRedVMTraceRejected", 2);
+            return;
+        }
+        requests[i].from = address;
+        requests[i].symbol = nullptr;
+    }
+    UInt32 installed{0};
+    for (size_t i = 0; i < arrsize(requests); i++) {
+        if (!requests[i].route(patcher, id, slide, size)) {
+            patcher.clearError();
+            NRed::singleton().setProp32("NRedVMTraceRejected", 3);
+            break;
+        }
+        installed |= 1U << i;
+    }
+    NRed::singleton().setProp32("NRedVMTraceRoutes", installed);
+    NRed::singleton().setProp32("NRedVMTraceEnabled", installed == GPUVMTraceData::RequiredRoutes ? 1 : 0);
+    SYSLOG("VMTrace", "24H32 mapping trace routes=0x%X; observation only, native mappings preserved", installed);
+}
+
+namespace
+{
+    int traceVMClientPID()
+    {
+        const auto process = current_proc();
+        if (process == nullptr) { return 0; }
+        const auto pid = proc_pid(process);
+        char name[32]{};
+        if (pid > 0) { proc_name(pid, name, sizeof(name)); }
+        name[sizeof(name) - 1] = '\0';
+        return strcmp(name, "gl_blend_probe") == 0 || strcmp(name, "Zen GPU Helper") == 0 ? pid : 0;
+    }
+
+    UInt32 traceVMOperation(const char* const operation, void* const self, const UInt64 address)
+    {
+        if (self == nullptr || !GPUVMTraceData::interestingAddress(address)) { return 0; }
+        const auto pid = traceVMClientPID();
+        if (pid <= 0) { return 0; }
+        static volatile UInt32 events{0};
+        const auto count = static_cast<UInt32>(OSIncrementAtomic(&events) + 1);
+        if (count > GPUVMTraceData::MaximumEvents) { return 0; }
+        const auto options = getMember<UInt32>(self, GPUVMTraceData::OptionsOffset);
+        SYSLOG("VMTrace", "begin op=%s pid=%d gpuVA=0x%llX options=0x%X event=%u", operation, pid,
+               address, options, count);
+        return count;
+    }
+
+    void traceVMResult(const char* const operation, void* const self, const bool result, const UInt32 event)
+    {
+        SYSLOG("VMTrace", "end op=%s pid=%d gpuVA=0x%llX options=0x%X result=%u event=%u", operation,
+               proc_pid(current_proc()), getMember<UInt64>(self, GPUVMTraceData::GPUAddressOffset),
+               getMember<UInt32>(self, GPUVMTraceData::OptionsOffset), result ? 1U : 0U, event);
+    }
+}
+
+bool X5000::traceAssignGPUVirtualAddress(void* const self, const UInt64 address)
+{
+    const auto traced = traceVMOperation("assign", self, address);
+    const auto result = FunctionCast(traceAssignGPUVirtualAddress, singleton().orgAssignGPUVirtualAddress)(self, address);
+    if (traced) { traceVMResult("assign", self, result, traced); }
+    return result;
+}
+
+bool X5000::traceCommitGPUPageTable(void* const self)
+{
+    const auto traced = self != nullptr ? traceVMOperation("commit", self,
+        getMember<UInt64>(self, GPUVMTraceData::GPUAddressOffset)) : 0;
+    const auto result = FunctionCast(traceCommitGPUPageTable, singleton().orgCommitGPUPageTable)(self);
+    if (traced) { traceVMResult("commit", self, result, traced); }
+    return result;
+}
+
+bool X5000::traceUpdateGPUPageTable(void* const self)
+{
+    const auto traced = self != nullptr ? traceVMOperation("update", self,
+        getMember<UInt64>(self, GPUVMTraceData::GPUAddressOffset)) : 0;
+    const auto result = FunctionCast(traceUpdateGPUPageTable, singleton().orgUpdateGPUPageTable)(self);
+    if (traced) { traceVMResult("update", self, result, traced); }
+    return result;
+}
+
+bool X5000::traceMapGPUVirtualRange(void* const self, const UInt64 address, void* const memory,
+                                   const UInt64 offset, const UInt64 size, const UInt32 flags)
+{
+    UInt32 event{0};
+    const auto pid = GPUVMTraceData::interestingRange(address, size) ? traceVMClientPID() : 0;
+    if (pid > 0) {
+        static volatile UInt32 events{0};
+        const auto count = static_cast<UInt32>(OSIncrementAtomic(&events) + 1);
+        if (count <= GPUVMTraceData::MaximumEvents) { event = count; }
+    }
+    const UInt64 thread = event != 0 ? thread_tid(current_thread()) : 0;
+    if (event != 0) {
+        SYSLOG("VMTrace", "range begin pid=%d tid=%llu event=%u gpuVA=0x%llX size=0x%llX offset=0x%llX flags=0x%X",
+               pid, thread, event, address, size, offset, flags);
+    }
+    const auto result = FunctionCast(traceMapGPUVirtualRange, singleton().orgMapGPUVirtualRange)(
+        self, address, memory, offset, size, flags);
+    if (event != 0) {
+        SYSLOG("VMTrace", "range end pid=%d tid=%llu event=%u result=%u", pid, thread, event, result ? 1U : 0U);
+    }
+    return result;
+}
+
+UInt64 X5000::traceGetPTEValue(void* const self, const UInt32 level, const UInt64 address,
+                             const UInt32 flags, const UInt32 fragment)
+{
+    const auto result = FunctionCast(traceGetPTEValue, singleton().orgGetPTEValue)(self, level, address, flags, fragment);
+    const auto pid = traceVMClientPID();
+    if (pid > 0) {
+        static volatile UInt32 events{0};
+        const auto count = static_cast<UInt32>(OSIncrementAtomic(&events) + 1);
+        if (count <= GPUVMTraceData::MaximumPTEEvents) {
+            SYSLOG("VMTrace", "pte pid=%d tid=%llu event=%u level=%u physical=0x%llX flags=0x%X fragment=%u value=0x%llX",
+                   pid, static_cast<UInt64>(thread_tid(current_thread())), count, level, address, flags, fragment, result);
+        }
+    }
+    return result;
+}
 
 // Replaces SDMA1 field with SDMA0 because we don't have SDMA1
 // TODO: Investigate why this is needed.

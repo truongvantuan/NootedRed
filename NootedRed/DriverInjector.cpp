@@ -28,6 +28,7 @@
 #include <libkern/c++/OSArray.h>
 #include <libkern/c++/OSDictionary.h>
 #include <libkern/c++/OSMetaClass.h>
+#include <libkern/c++/OSNumber.h>
 #include <libkern/c++/OSObject.h>
 #include <libkern/c++/OSString.h>
 
@@ -49,6 +50,23 @@ static const char com_apple_driver_AppleGFXHDA[] = {
 #include "Personalities/com.apple.driver.AppleGFXHDA.inc"
 , '\0'
 };
+
+namespace {
+    // Change only Main10 decode's advertised level. Keep Main/AVC and encode intact.
+    bool capHEVCMain10(OSDictionary* personality)
+    {
+        if (personality == nullptr) { return false; }
+        auto* caps = OSDynamicCast(OSDictionary, personality->getObject("IOGVAHEVCDecodeCapabilities"));
+        auto* details = caps ? OSDynamicCast(OSDictionary, caps->getObject("VTPerProfileDetails")) : nullptr;
+        auto* profile = details ? OSDynamicCast(OSDictionary, details->getObject("2")) : nullptr;
+        if (profile == nullptr) { return false; }
+        auto* zero = OSNumber::withNumber(static_cast<unsigned long long>(0), 32);
+        if (zero == nullptr) { return false; }
+        const bool applied = profile->setObject("VTMaxDecodeLevel", zero);
+        zero->release();
+        return applied;
+    }
+}
 
 DriverInjector::DriverInjector() :
     drivers{
@@ -94,23 +112,35 @@ bool DriverInjector::wrapAddDrivers(void* const self, OSArray* const array, cons
 
             DBGLOG("DriverInjector", "Matched %s, injecting.", driver.identifier);
 
-            if (VDA::singleton().isAVCOnly() && strcmp(driver.identifier, "com.apple.kext.AMDRadeonX5000") == 0) {
+            if (strcmp(driver.identifier, "com.apple.kext.AMDRadeonX5000") == 0) {
                 const auto count = driver.personalities->getCount();
-                for (UInt32 i = 0; i < count; ++i) {
-                    auto* const pDict = OSDynamicCast(OSDictionary, driver.personalities->getObject(i));
-                    if (pDict != nullptr) {
-                        pDict->removeObject("IOGVAHEVCDecode");
-                        pDict->removeObject("IOGVAHEVCDecodeCapabilities");
-                        if (!VDA::singleton().isHEVCEncodeAllowed()) {
-                            pDict->removeObject("IOGVAHEVCEncode");
-                            pDict->removeObject("IOGVAHEVCEncodeCapabilities");
+                if (VDA::singleton().isAVCOnly()) {
+                    for (UInt32 i = 0; i < count; ++i) {
+                        auto* const pDict = OSDynamicCast(OSDictionary, driver.personalities->getObject(i));
+                        if (pDict != nullptr) {
+                            pDict->removeObject("IOGVAHEVCDecode");
+                            pDict->removeObject("IOGVAHEVCDecodeCapabilities");
+                            if (!VDA::singleton().isHEVCEncodeAllowed()) {
+                                pDict->removeObject("IOGVAHEVCEncode");
+                                pDict->removeObject("IOGVAHEVCEncodeCapabilities");
+                            }
                         }
                     }
+                    if (VDA::singleton().isHEVCEncodeAllowed()) {
+                        DBGLOG("DriverInjector", "-NRedAVCEncode active: stripped HEVC decode, preserved HEVC encode for %s", driver.identifier);
+                    } else {
+                        DBGLOG("DriverInjector", "-NRedAVC active: stripped HEVC decode/encode capabilities from %s", driver.identifier);
+                    }
                 }
-                if (VDA::singleton().isHEVCEncodeAllowed()) {
-                    DBGLOG("DriverInjector", "-NRedAVCEncode active: stripped HEVC decode, preserved HEVC encode for %s", driver.identifier);
-                } else {
-                    DBGLOG("DriverInjector", "-NRedAVC active: stripped HEVC decode/encode capabilities from %s", driver.identifier);
+                else if (!VDA::singleton().isHEVC10Allowed()) {
+                    UInt32 capped = 0;
+                    for (UInt32 i = 0; i < count; ++i) {
+                        if (capHEVCMain10(OSDynamicCast(OSDictionary, driver.personalities->getObject(i)))) {
+                            ++capped;
+                        }
+                    }
+                    if (capHEVCMain10(dict)) { ++capped; }
+                    DBGLOG("DriverInjector", "Main10 decode level capped in %u dictionaries (-NRedHEVC10 overrides)", capped);
                 }
             }
 

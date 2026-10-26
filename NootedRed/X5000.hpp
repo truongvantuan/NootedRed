@@ -57,6 +57,14 @@ class X5000
     mach_vm_address_t              orgObtainAccelChannelGroup{0};
     mach_vm_address_t              orgHwlConvertChipFamily{0};
     mach_vm_address_t              orgPM4SubmitCommandBuffer{0};
+    mach_vm_address_t              orgAssignGPUVirtualAddress{0};
+    mach_vm_address_t              orgCommitGPUPageTable{0};
+    mach_vm_address_t              orgUpdateGPUPageTable{0};
+    mach_vm_address_t              orgMapGPUVirtualRange{0};
+    mach_vm_address_t              orgGetPTEValue{0};
+    mach_vm_address_t              orgAllocatePhysical{0};
+    mach_vm_address_t              orgResourcePageon{0};
+    mach_vm_address_t              orgAllocateLargeBlocks{0};
     void                           (*notifyGfxAccess)(void*){nullptr};
 
 public:
@@ -71,6 +79,18 @@ public:
     void setVCN0Capability(void* self, bool enabled);
 
 private:
+    [[gnu::noinline]] void installAllocationTrace(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size);
+    static bool traceAllocatePhysical(void* self);
+    static void traceResourcePageon(void* self, void* event, bool flag, UInt64 options);
+    static bool traceAllocateLargeBlocks(void* self, void* element, UInt64 bytes, UInt64 alignment,
+                                         UInt64 minimum, UInt32 origin, UInt32 operation, bool noFixed);
+    [[gnu::noinline]] void installVMTrace(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size);
+    static bool traceAssignGPUVirtualAddress(void* self, UInt64 address);
+    static bool traceCommitGPUPageTable(void* self);
+    static bool traceUpdateGPUPageTable(void* self);
+    static bool traceMapGPUVirtualRange(void* self, UInt64 address, void* memory, UInt64 offset,
+                                        UInt64 size, UInt32 flags);
+    static UInt64 traceGetPTEValue(void* self, UInt32 level, UInt64 address, UInt32 flags, UInt32 fragment);
     static bool   allocateHWEngines(void* self);
     static void   wrapSetupAndInitializeHWCapabilities(void* self);
     static void*  wrapGetHWChannel(void* self, AMDHWEngineType engineType, UInt32 ringId);

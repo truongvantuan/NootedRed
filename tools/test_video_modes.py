@@ -29,7 +29,7 @@ bool checkKernelArgument(const char* arg) {
     return (std::string(" ") + args + " ").find(std::string(" ") + arg + " ") != std::string::npos;
 }
 struct VDA {
-    bool requested = false, avcOnly = false, hevcEncodeAllowed = false;
+    bool requested = false, avcOnly = false, hevcEncodeAllowed = false, hevc10Allowed = false;
     void init();
 };
 '''
@@ -57,6 +57,10 @@ int main() {
         args = c.flags;
         VDA v; v.init();
         assert(v.requested == c.requested && v.avcOnly == c.avc && v.hevcEncodeAllowed == c.encode);
+    }
+    for (const char* flags : {"-NRedHEVC10", "-NRedVDA -NRedHEVC10", "-NRedAVC -NRedHEVC10"}) {
+        args=flags; VDA v; v.init(); assert(v.hevc10Allowed);
+        assert(v.requested == (std::string(flags).find("-NRedVDA")!=std::string::npos || std::string(flags).find("-NRedAVC")!=std::string::npos));
     }
     assert(!(GPU{false, false}.hasExternalVideo()));
     assert(!(GPU{false, true}.hasExternalVideo()));

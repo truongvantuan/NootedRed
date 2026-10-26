@@ -315,9 +315,11 @@ def collect_metadata(root: Path, warnings: list[str]) -> dict:
 
     write_text(meta / "videotoolbox-ffmpeg.txt", run(["ffmpeg", "-hide_banner", "-hwaccels"]).get("stdout", ""))
     write_text(meta / "coremedia-defaults.txt", run(["defaults", "read", "com.apple.coremedia"]).get("stdout", ""))
+    write_json(meta / "coremedia-system-defaults.json",
+               run(["defaults", "read", "/Library/Preferences/com.apple.coremedia"]))
 
     nootedred_loaded = "org.ChefKiss.NootedRed" in kexts or "org.ChefKiss.NootedRed" in kextstat
-    flags = [flag for flag in ("-NRedGLFix", "-NRedVDA", "-NRedAVC", "-NRedAVCEncode", "-NRedVCNNoGfxOff", "-NRedNoSubmitGuard", "-NRedForceVDA", "-NRedGLFixResolve", "-NRedGLFixResolveOnly")
+    flags = [flag for flag in ("-NRedGLFix", "-NRedVDA", "-NRedAVC", "-NRedAVCEncode", "-NRedVCNNoGfxOff", "-NRedNoSubmitGuard", "-NRedForceVDA", "-NRedSubmitGuard", "-NRedLegacyBlend", "-NRedNoLegacyBlend", "-NRedHEVC10", "-NRedVCNNoDrain", "-NRedGLFixResolve", "-NRedGLFixResolveOnly")
              if flag in boot_args]
     environment = {
         "boot_args": boot_args,
@@ -738,11 +740,18 @@ def collect_vda(root: Path, cache_dir: Path | None, warnings: list[str],
             warnings.append(f"could not copy kernel collection: {error}")
 
     if include_generators:
-        # (header name, generator script, output flag, committed header in the repo)
+        os_ver = get_macos_version()
+        os_suffix = next((suffix for prefix, suffix in
+                         (("13.", "Ventura"), ("14.", "Sonoma"), ("15.", "Sequoia"), ("26.", "Tahoe"))
+                         if os_ver.startswith(prefix)), "")
+        build = run(["sw_vers", "-buildVersion"]).get("stdout", "").strip()
+        # Output only into the requested evidence directory. Never overwrite a
+        # committed variant or copy a Sequoia name onto another OS's byte table.
+        safe_build = re.sub(r"[^A-Za-z0-9._-]", "_", build) or "unknown"
         generator_specs = (
-            ("VCNData/24H32.hpp", "gen_vcn_kernel_data.py", "--output"),
-            ("VDAVAData.hpp", "gen_vda_va_data.py", "--output"),
-            ("VDAGVAData.hpp", "gen_vda_gva_data.py", "--header"),
+            (f"VCNData/{safe_build}.hpp", "gen_vcn_kernel_data.py", "--output"),
+            (f"VDAVAData{os_suffix}.hpp", "gen_vda_va_data.py", "--output"),
+            (f"VDAGVAData{os_suffix}.hpp", "gen_vda_gva_data.py", "--header"),
         )
         for name, script, output_flag in generator_specs:
             script_path = TOOLS_DIR / script

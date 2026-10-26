@@ -26,6 +26,7 @@
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
+#include <IOKit/IOLib.h>
 #include <Kexts.hpp>
 #include <NRed.hpp>
 #include <VCNBridge.hpp>
@@ -51,6 +52,9 @@ namespace
     const char* const kBootArgAVCEncode = "-NRedAVCEncode";
     // Diagnostic: keep the X5000 GFXOFF state disabled while the bridged VCN0 engine is active.
     const char* const kBootArgNoGfxOff = "-NRedVCNNoGfxOff";
+    const char* const kBootArgNoDrain = "-NRedVCNNoDrain";
+    constexpr UInt32 kDrainTimeoutMs = 250;
+    constexpr UInt32 kDrainStepMs = 5;
 
     // Prefer exact-build data, with explicitly declared family variants as byte-verified fallbacks.
     bool isSupportedOS()
@@ -80,7 +84,8 @@ namespace
         // the engine (0x1638 is validated; the other VCN 2.x APUs are experimental) may use this bridge.  The
         // exact build lookup and byte-level guards remain the hard safety gates.
         const auto* const profile = DeviceProfile::current();
-        return isSupportedBuild() && !NRed::singleton().hasExternalVideo() && profile != nullptr
+        return (currentKernelVersion().major() != 22 || NRed::singleton().getDeviceID() == 0x1638)
+               && isSupportedBuild() && !NRed::singleton().hasExternalVideo() && profile != nullptr
                && profile->media.vcnGeneration == DeviceProfile::kVcn2_2 && profile->media.hasVCN0;
     }
 
@@ -178,6 +183,7 @@ void VCNBridge::init()
 {
     this->requested = checkKernelArgument(kBootArgVDA) || checkKernelArgument(kBootArgAVC) || checkKernelArgument(kBootArgAVCEncode);
     this->noGfxOff = this->requested && checkKernelArgument(kBootArgNoGfxOff);
+    this->noDrain = this->requested && checkKernelArgument(kBootArgNoDrain);
     if (this->noGfxOff) {
         NRed::singleton().setProp32("NRedVCNNoGfxOff", 1);
         SYSLOG("VCN", "VCN GFXOFF hold requested; X5000 enableGfxOff will be ignored");
@@ -227,6 +233,7 @@ void* VCNBridge::allocateEngine(void* const hardware)
     this->hardwareHandle = hardware;
     auto* const engine   = this->engineMC->alloc();
     this->engineAllocated = engine != nullptr;
+    this->vcnEngine = engine;
     NRed::singleton().setProp32("NRedVCNEngineAllocated", static_cast<UInt32>(this->engineAllocated));
     NRed::singleton().setProp32("NRedVDAMediaEnabled", static_cast<UInt32>(this->engineAllocated));
     if (!this->engineAllocated) {
@@ -246,6 +253,11 @@ bool VCNBridge::acceleratorStart(void* const self, IOService* const provider)
     auto& bridge = singleton();
     if (bridge.requested) {
         NRed::singleton().setProp32("NRedVCNAccelStartSeen", 1);
+        NRed::singleton().setProp32("NRedVCNDrainBuild", 3);
+        NRed::singleton().setProp32("NRedVCNNoDrain", bridge.noDrain ? 1 : 0);
+        if (currentKernelVersion().major() == 22) {
+            NRed::singleton().setProp32("NRedVenturaVDARevision", 1);
+        }
         if (bridge.noGfxOff) { NRed::singleton().setProp32("NRedVCNNoGfxOff", 1); }
         publishStage(5);
     }
@@ -284,9 +296,11 @@ bool VCNBridge::acceleratorStart(void* const self, IOService* const provider)
     const auto result = FunctionCast(acceleratorStart, bridge.orgAcceleratorStart)(self, provider);
     if (result) { publishStage(10); }
     NRed::singleton().setProp32("NRedVCNAcceleratorStarted", static_cast<UInt32>(result));
+    NRed::singleton().setProp32("NRedVCNDrainReady", result && bridge.vcnIsIdle != 0 && !bridge.noDrain ? 1 : 0);
     if (!result) {
         bridge.loadCompleted   = false;
         bridge.engineAllocated = false;
+        bridge.vcnEngine = nullptr;
         NRed::singleton().setProp32("NRedVCNEngineAllocated", 0);
         NRed::singleton().setProp32("NRedVDAMediaEnabled", 0);
         if (bridge.hardwareHandle != nullptr) {
@@ -301,6 +315,7 @@ bool VCNBridge::acceleratorStart(void* const self, IOService* const provider)
 void VCNBridge::acceleratorStop(void* const self, IOService* const provider)
 {
     auto& bridge = singleton();
+    bridge.drainVCN("accelerator stop");
     FunctionCast(acceleratorStop, bridge.orgAcceleratorStop)(self, provider);
 
     // The accelerator is going away; drop all engine/accelerator state without touching the hardware
@@ -308,6 +323,7 @@ void VCNBridge::acceleratorStop(void* const self, IOService* const provider)
     // allocate a fresh engine.
     bridge.engineAllocated = false;
     bridge.hardwareHandle  = nullptr;
+    bridge.vcnEngine = nullptr;
     NRed::singleton().setProp32("NRedVCNEngineAllocated", 0);
     NRed::singleton().setProp32("NRedVDAMediaEnabled", 0);
 }
@@ -361,6 +377,7 @@ bool VCNBridge::clientStart(void* const self, void* const provider)
 void VCNBridge::clientStop(void* const self, void* const provider)
 {
     auto& bridge = singleton();
+    bridge.drainVCN("client stop");
     const auto address = bridge.engineEnabled() ? bridge.clientStop5000 : bridge.orgClientStop;
     reinterpret_cast<void (*)(void*, void*)>(address)(self, provider);
 }
@@ -375,6 +392,16 @@ UInt64 VCNBridge::surfaceCopy(void* const self, void* const input, const UInt64 
 void VCNBridge::noopEnableGfxOff(void* const self)
 {
     auto& bridge = singleton();
+    // This hook is installed before X6000 loading/engine allocation can fail. A failed bridge must
+    // preserve the normal graphics power policy instead of leaving an inactive VCN hold behind.
+    if (!bridge.noGfxOff || !bridge.engineEnabled()) {
+        if (bridge.gfxOffHeld) {
+            bridge.gfxOffHeld = false;
+            NRed::singleton().setProp32("NRedVCNGfxOffHeld", 0);
+        }
+        FunctionCast(noopEnableGfxOff, bridge.enableGfxOff5000)(self);
+        return;
+    }
     if (!bridge.gfxOffHeld) {
         bridge.gfxOffHeld = true;
         NRed::singleton().setProp32("NRedVCNGfxOffHeld", 1);
@@ -386,7 +413,7 @@ void VCNBridge::noopEnableGfxOff(void* const self)
 void VCNBridge::holdGfxOff()
 {
     auto& bridge = singleton();
-    if (!bridge.noGfxOff || bridge.gfxOffHeld || bridge.hardwareHandle == nullptr
+    if (!bridge.noGfxOff || !bridge.engineEnabled() || bridge.gfxOffHeld || bridge.hardwareHandle == nullptr
         || bridge.notifyGfxAccess == 0) {
         return;
     }
@@ -395,6 +422,42 @@ void VCNBridge::holdGfxOff()
     bridge.gfxOffHeld = true;
     NRed::singleton().setProp32("NRedVCNGfxOffHeld", 1);
     SYSLOG("VCN", "GFXOFF held off for the bridged VCN engine");
+}
+
+void VCNBridge::drainVCN(const char* const reason)
+{
+    auto& bridge = singleton();
+
+    if (!bridge.engineEnabled() || bridge.vcnEngine == nullptr || bridge.vcnIsIdle == 0 || bridge.noDrain) { return; }
+
+    // Poll the engine's own idle query so a wedged channel can never stall teardown for longer than the
+    // bound. Without a validated idle predicate no drain is attempted. Every teardown is
+    // waited on: a timeout is recorded, never used to switch the drain off, so a bad first teardown cannot
+    // leave every later one unprotected.
+    UInt32 waited = 0;
+    bool   idle   = false;
+
+    const auto isIdle = reinterpret_cast<bool (*)(void*)>(bridge.vcnIsIdle);
+    for (;;) {
+        if (isIdle(bridge.vcnEngine)) { idle = true; break; }
+        if (waited >= kDrainTimeoutMs) { break; }
+        IOSleep(kDrainStepMs);
+        waited += kDrainStepMs;
+    }
+
+    ++bridge.drainCount;
+    bridge.lastWaitMs = waited;
+    if (waited > bridge.maxWaitMs) { bridge.maxWaitMs = waited; }
+    NRed::singleton().setProp32("NRedVCNIdleWaitedMs", waited);
+    NRed::singleton().setProp32("NRedVCNIdleWaitedMaxMs", bridge.maxWaitMs);
+    NRed::singleton().setProp32("NRedVCNIdleDrains", bridge.drainCount);
+
+    if (!idle) {
+        ++bridge.drainTimeouts;
+        NRed::singleton().setProp32("NRedVCNIdleTimeout", 1);
+        NRed::singleton().setProp32("NRedVCNIdleTimeouts", bridge.drainTimeouts);
+        SYSLOG("VCN", "VCN engine still busy after %u ms at %s; teardown continues", waited, reason);
+    }
 }
 
 void VCNBridge::signalWork(void* const hardware)
@@ -638,6 +701,10 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
                       this->newVideo6000, slide, size);
         ok &= resolve(patcher, id, "__ZN31AMDRadeonX6000_IAMDSMLInterface18createSMLInterfaceEj",
                       this->createSML6000, slide, size);
+
+        // Optional predicate, used only after this build's vtable/call-site ABI checks succeed.
+        resolve(patcher, id, "__ZN30AMDRadeonX6000_AMDVCN2HWEngine6isIdleEv",
+                this->vcnIsIdle, slide, size);
 
         static const char* const kPairs[] = {
             "__ZN37AMDRadeonX6000_AMDGraphicsAccelerator10gMetaClassE",

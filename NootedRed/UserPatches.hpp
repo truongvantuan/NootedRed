@@ -96,6 +96,8 @@ public:
         size_t       skip;
         size_t       count;
         UInt64       pageOffset;
+        // GL signatures also require the named driver; application code must never be patched.
+        bool         glDriver{false};
     };
 
     // Lookup-style patch for one user-space Mach-O image.
@@ -120,6 +122,12 @@ public:
 
         // Number of occurrences of `find` to patch.
         size_t count;
+
+        // Additional file-identity requirement for GL pages. Metal and video tables leave this false.
+        bool glDriver{false};
+
+        // Function replacements with no supported nearby-build fallback.
+        bool exactOnly{false};
     };
 
     // Semantic patch kinds.  The runtime verifies the instruction form before writing anything, so a
@@ -184,10 +192,10 @@ public:
 
 private:
     // Longest supported replacement, in bytes.
-    static constexpr size_t kMaxPatchSize = 32;
+    static constexpr size_t kMaxPatchSize = 64;
 
     // Amount of distinct pages and per-page sites the native backend supports.  The combined selected GL
-    // set (3 pages), VA (8) and AppleGVA (1) tables currently use 12 pages; keep headroom so a new table
+    // set (4 pages), VA including the Sequoia pitch fix (9) and AppleGVA (1) use 14 pages; keep headroom so a new table
     // cannot be silently dropped by the page cap.  The backend refuses the whole table on overflow.
     static constexpr size_t kMaxNativePages  = 16;
     static constexpr size_t kMaxSitesPerPage = 16;
@@ -217,6 +225,8 @@ private:
         size_t       siteCount{0};
         bool         vda{false};
         bool         mismatchLogged{false};
+        bool         glDriver{false};
+        bool         exactOnly{false};
     };
 
     const PatchSet* patchSets{nullptr};
@@ -255,6 +265,8 @@ private:
     size_t    nativePatchCount{0};
     bool      enabled{false};
     bool      vdaEnabled{false};
+    // On Darwin 23/24/25 the complete-block GL planner exclusively owns SE/DualQuad.
+    bool      pageLocalGL{false};
 
     void selectPatchSet();
     auto currentApuMask() const -> ApuMask;
@@ -274,13 +286,15 @@ private:
     auto installNativePagePatcher(KernelPatcher& patcher) -> bool;
     auto buildNativePatches() -> bool;
     void patchNativePage(const void* data, UInt64 pageOffset, void* vnode, bool cachePage);
-    void patchSignaturePage(const void* data, UInt64 pageOffset);
+    void patchGLBudgetPage(const void* data, UInt64 pageOffset);
+    void patchSignaturePage(const void* data, UInt64 pageOffset, void* vnode);
 
     // Generic semantic backend: matches instruction-context windows instead of full page images.  Returns
     // true when at least one site was patched.  `vnode` is the code-signing vnode for file-backed pages and
     // nullptr for shared-cache ranges; GL entries are only applied when the vnode is the X5000 GL driver.
     auto patchSemanticPage(const void* data, void* vnode, bool cachePage) -> bool;
     auto isGLDriverVnode(void* vnode) const -> bool;
+    auto isTargetVnode(void* vnode) const -> bool;
 
     // Returns true when `data` is an already-patched version of an exact native page.  This is the normal
     // state for a page after the first process validated it: the kernel keeps the patched bytes, so a later
@@ -289,6 +303,7 @@ private:
     auto isPatchedPage(const NativePage& page, const UInt8* data) const -> bool;
 
     bool              submitGuardEnabled{false};
+    bool              legacyBlendEnabled{false};
     mach_vm_address_t orgSharedRegionCheck{0};
 
     auto installSubmitGuard(KernelPatcher& patcher) -> bool;

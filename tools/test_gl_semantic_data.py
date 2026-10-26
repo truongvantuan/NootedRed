@@ -41,7 +41,7 @@ def load_arrays(path: pathlib.Path) -> dict[str, bytes]:
     arrays = {}
     for filename in re.findall(r'#include\s+"(UserPatches[^"/]*\.inc)"', text):
         arrays.update(load_arrays(path.parent / filename))
-    for match in re.finditer(r"static const UInt8\s+(\w+)\s*\[\]\s*=\s*\{(.*?)\};", text, re.S):
+    for match in re.finditer(r"(?:static const|inline constexpr) UInt8\s+(\w+)\s*\[\]\s*=\s*\{(.*?)\};", text, re.S):
         values = re.findall(r"0x([0-9A-Fa-f]{2})", match.group(2))
         arrays[match.group(1)] = bytes(int(value, 16) for value in values)
     return arrays
