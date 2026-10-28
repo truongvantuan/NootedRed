@@ -73,7 +73,26 @@ namespace UserOpenGLResolver
         }
         else {
             if (!allowDynamic) { return false; }
+            // Adapted from steve12311 27ce504: reject impossible prefixes before
+            // full function checks. Never assume relocated prefix bytes are fixed.
+            UInt64 nativeHead, patchedHead;
+            __builtin_memcpy(&nativeHead, patch.original, sizeof(nativeHead));
+            __builtin_memcpy(&patchedHead, patch.patched, sizeof(patchedHead));
+            const auto& prefixFunction = device.resolver->functions[kind];
+            const auto prefixStart = device.resolver->locations[kind].offset;
+            bool fixedPrefix = true;
+            for (UInt32 r = 0; r < prefixFunction.originalCount; ++r) {
+                const auto off = prefixFunction.originalRefs[r].offset;
+                if (off < prefixStart + sizeof(UInt64) && off + 4 > prefixStart) { fixedPrefix = false; }
+            }
+            for (UInt32 r = 0; r < prefixFunction.patchedCount; ++r) {
+                const auto off = prefixFunction.patchedRefs[r].offset;
+                if (off < prefixStart + sizeof(UInt64) && off + 4 > prefixStart) { fixedPrefix = false; }
+            }
             for (UInt32 offset = 0; offset <= PageSize - patch.size; ++offset) {
+                UInt64 head;
+                __builtin_memcpy(&head, bytes + offset, sizeof(head));
+                if (fixedPrefix && head != nativeHead && head != patchedHead) { continue; }
                 const auto address = fileOffset + offset;
                 const bool native  = matches(device, kind, bytes + offset, address, false);
                 const bool patched = !native && matches(device, kind, bytes + offset, address, true);
