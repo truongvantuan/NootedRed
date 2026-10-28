@@ -1,8 +1,9 @@
 # Codec guard integration: validated primitives
 
 Source: steve12311 31fcc87 and its preceding codec guard commits. These components
-are now in the local tree, independently tested, but are not wired into a running
-kernel hook. This is not a completed driver feature or a hardware-verified fix.
+are now in the local tree and wired into the existing shared-region hook behind
+the experimental `-NRedVCNSafety` gate. That gate is off by default and has not
+been enabled in EFI. This is not a hardware-verified driver fix.
 
 ## Imported and adapted components
 
@@ -73,8 +74,45 @@ must own guard and media installation privately within the existing map lease:
 8. Keep one existing shared-region hook, including when video is enabled with
    SubmitGuard/LegacyBlend opted out. Preserve native syscall ordering/results.
 
-The platform adapter, failure isolation/lifetime behavior, compiled kernel-stack
-measurement and real installer fault-injection tests still need implementation.
-Then build and verify a candidate before any EFI deployment/reboot or malformed
-hardware-input exercise. Runtime functionality, video output, startup and real
-sleep/wake acceptance remain required for the full migration goal.
+## Implemented private adapter checkpoint
+
+`MediaSafety.cpp` now implements that ownership sequence for Darwin24 build
+24H232, the exact current cache UUID and the existing VCN2.2 device allowlist.
+The gate additionally requires an existing video-mode request and the local
+profile/external-video checks. It suppresses global VA/GVA pager registration
+before routing the private path. If routing or readiness fails, this selected
+path leaves media stock; it does not fall back to unguarded adaptation. GL/Metal
+owners and default/older-build media routing remain unchanged.
+
+The adapter rechecks all ten original media pages immediately before code-page
+COW, after allocating, sealing and reading back the guard payload. Four guards
+precede fourteen media writes. Repeat calls verify full functions, typed targets,
+guard payload and complete media pages again. Existing per-map leases serialize
+our installers; this is not a stop-the-world guarantee against unrelated writers.
+
+An incomplete rollback retains the possibly reachable payload and halts further
+private media installs for the boot. This deliberately uses no persistent map
+pointer identity or new map-destruction hook. It is coarser than upstream's map
+quarantine and does not undo patches already installed in other processes.
+Published user pages are owned by their address space until native map teardown.
+VM deallocation failures can leak an unpublished page; they cannot justify freeing
+potentially referenced guard storage. Stop hardware testing after a halt marker.
+
+Evidence: all44 workflow host checks pass. The actual adapter runs under fatal
+ASan/UBSan in 241 cases covering policy combinations, repeat installs, every
+write/protection failure, allocation failures, maximum-RX sealing, payload
+corruption, a changed non-site page byte between planning and publication,
+silent rollback corruption, guard retention and refusal of later transactions.
+The actual shared-region wrapper is also exercised with video-only routing,
+unready bridge, FairPlay exclusions and native syscall failures/results.
+
+The production compile flags yield a 72-byte wrapper frame, 1576-byte largest
+reachable frame and 4744-byte visible direct call chain across UserPatches and
+MediaSafety. This excludes native kernel implementations and indirect callbacks;
+it is not a bound on total kernel stack usage. The RELEASE build passes.
+
+No new kext or boot argument has been installed. Runtime patch-byte validation,
+valid hardware encode/decode output, process startup cost and real sleep/wake
+acceptance remain required. Malformed inputs stay CPU-only until the installer
+and normal hardware workloads are accepted. Broader SRD/scratch and VPF lifecycle
+work remains separate; importing the transaction executor is not their adoption.

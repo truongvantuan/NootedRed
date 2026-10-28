@@ -12,6 +12,8 @@ SHIM=r'''
 #include <cstdio>
 #include <initializer_list>
 #include <VDATableSelection.hpp>
+#include <MediaSafetyPolicy.hpp>
+bool safetyOption=false;bool checkKernelArgument(const char*){return safetyOption;}
 char osversion[32]="24H232";
 using UInt32=uint32_t;using UInt64=uint64_t;using UInt8=uint8_t;
 #define SYSLOG(...) do{}while(0)
@@ -37,6 +39,7 @@ public:
  struct PagePatch {bool glDriver=false,exactOnly=false;};
  static constexpr unsigned kMaxNativePatches=64;
  bool submitGuardEnabled=true,legacyBlendEnabled=true,enabled=true,vdaEnabled=false,vdaResolverEnabled=false;
+ bool mediaSafetyEnabled=false;
  bool resolverEnabled=true,resolverOnly=false,semanticEnabled=true,semanticMTLEnabled=true,pageLocalGL=false;
  const int* signatures=nullptr;unsigned signatureCount=0;
  const PagePatch* patches=nullptr;unsigned patchCount=0,nativePatchCount=0;
@@ -74,6 +77,13 @@ int main(){KernelPatcher k;unsigned cases=0;
   p.vdaTables[0]={fallback,1,nullptr};p.vdaTables[1]={target1,2,"24H232"};p.vdaTables[2]={target2,1,"24H232"};p.vdaTableCount=3;
   p.processPatcher(k);assert(p.nativePatchCount==(!std::strcmp(build,"24H232")?3:1));
  }
+ safetyOption=true;std::strcpy(osversion,"24H232");version.v=24;
+ {UserPatches p;p.enabled=false;p.submitGuardEnabled=p.legacyBlendEnabled=false;p.vdaEnabled=true;
+  static UserPatches::PagePatch vp[]={{false,true}};p.vdaTables[0]={vp,1,nullptr};p.vdaTableCount=1;
+  p.processPatcher(k);assert(p.mediaSafetyEnabled&&p.cacheHooks==1&&p.nativeHooks==0&&!p.nativePatchCount&&!p.vdaResolverEnabled);}
+ std::strcpy(osversion,"24H32");
+ {UserPatches p;p.enabled=false;p.vdaEnabled=true;static UserPatches::PagePatch vp[]={{false,true}};p.vdaTables[0]={vp,1,nullptr};p.vdaTableCount=1;
+  p.processPatcher(k);assert(!p.mediaSafetyEnabled&&p.nativeHooks==1);}
  printf("production installation: %u GL/blend/submit/video/OS combinations; GL-only zero-table hooks retained\n",cases);
 }
 '''

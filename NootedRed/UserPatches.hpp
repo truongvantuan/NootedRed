@@ -269,6 +269,7 @@ private:
     size_t    nativePatchCount{0};
     bool      enabled{false};
     bool      vdaEnabled{false};
+    bool      mediaSafetyEnabled{false};
     // On Darwin 23/24/25 the complete-block GL planner exclusively owns SE/DualQuad.
     bool      pageLocalGL{false};
 

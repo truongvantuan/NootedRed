@@ -39,7 +39,8 @@ struct NRed {
     static NRed& singleton() { static NRed n; return n; }
     void setProp32(const char* name, unsigned value) { props[name]=value; }
 };
-int current_task() { return 1; }
+using task_t=void*;
+task_t current_task() { return reinterpret_cast<void*>(1); }
 void* current_thread() { static int thread; return &thread; }
 using IOLock=std::mutex;
 constexpr int THREAD_UNINT=0;
@@ -84,8 +85,8 @@ int copyOut(const void* data, void* destination, size_t size) {
 }
 int (*copyInFunc)(const void*,void*,size_t)=copyIn;
 int (*copyOutFunc)(const void*,void*,size_t)=copyOut;
-vm_map_t getMap(int) { return reinterpret_cast<void*>(1); }
-vm_map_t (*getTaskMapFunc)(int)=getMap;
+vm_map_t getMap(task_t) { return reinterpret_cast<void*>(1); }
+vm_map_t (*getTaskMapFunc)(task_t)=getMap;
 bool leafProtection(vm_map_t, UInt64 address, int& protection, int* maximum=nullptr) {
  auto i=regions.find(address & ~4095ULL); if(i==regions.end()) return false;
  protection=i->second.protection;
@@ -112,11 +113,15 @@ int vm_allocate(vm_map_t,UInt64* address,size_t,int) {
  regions[*address].protection=3; ++allocations; return 0;
 }
 int vm_deallocate(vm_map_t,UInt64 address,size_t) { regions.erase(address); ++deallocations; return 0; }
+bool isFairPlayClient(task_t);
+bool bridgeReady=true;
+struct VCNBridge {static VCNBridge& singleton(){static VCNBridge b;return b;}bool loadReady(){return bridgeReady;}};
+namespace MediaSafety {int calls=0;void install(vm_map_t,UInt64,int){++calls;}}
 struct SharedRegionCheckArgs { UInt64 startAddress; };
 class UserPatches {
  public:
     static UserPatches& singleton() { static UserPatches value; return value; }
-    bool submitGuardEnabled=true, legacyBlendEnabled=true;
+    bool submitGuardEnabled=true, legacyBlendEnabled=true,mediaSafetyEnabled=false;
     UInt64 orgSharedRegionCheck=0;
     static int wrapSharedRegionCheck(proc_t,void*,int*);
     void applySubmitGuard(proc_t,void*); void applyLegacyBlend(vm_map_t,mach_vm_offset_t,proc_t);
@@ -256,6 +261,18 @@ int main() {
  assert(!isFairPlayClient(current_proc()) && falseEntitlement.releases==1);
  returnedEntitlement=&trueEntitlement;
  assert(isFairPlayClient(current_proc()) && trueEntitlement.releases==1);
+ // Exercise actual wrapper routing with video as the only enabled consumer,
+ // and confirm bridge/FairPlay checks do not alter native syscall results.
+ for(bool safety:{false,true})for(bool ready:{false,true})for(bool fair:{false,true})
+  for(bool enabled:{false,true})for(bool blend:{false,true})for(int status:{0,5}){
+   reset();MediaSafety::calls=0;bridgeReady=ready;returnedEntitlement=fair?&trueEntitlement:nullptr;
+   hooked.submitGuardEnabled=enabled;hooked.legacyBlendEnabled=blend;hooked.mediaSafetyEnabled=safety;
+   int result=0;syscallResult=status;expectedArgs=&args;expectedReturn=&result;
+   assert(UserPatches::wrapSharedRegionCheck(current_proc(),&args,&result)==status&&result==37);
+   assert(MediaSafety::calls==int(safety&&ready&&!fair&&status==0));
+   assert(allocations==(enabled&&status==0?1:0));
+   assert((NRed::singleton().props["NRedLegacyBlendApplied"]>0)==(blend&&status==0));
+  }
  std::puts("production cache patches: page plans, syscall ordering, UUID rejection, idempotency, sealed payload permissions, permission failure/readback rejection, partial-write rollback and retained reachable payload passed");
 }
 '''

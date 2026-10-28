@@ -80,6 +80,7 @@ patches in both the exact-page and contextual-site paths. These changes require 
 | `-NRedAVC` | Disable HEVC decode and encode capabilities; overrides the other video modes |
 | `-NRedAVCEncode` | H.264 hardware decode, software HEVC decode, preserve HEVC hardware encode |
 | `-NRedVCNNoGfxOff` | Optional GFXOFF hold when a video mode is requested |
+| `-NRedVCNSafety` | Experimental private guard-first media transaction, limited to Darwin24/24H232 and eligible VCN2.2 profiles; requires a video mode. Off by default, hardware acceptance pending. See [integration notes](Codec-Guard-Integration-20261028.md). |
 | `-NRedForceVDA` | Override the external AMD GPU block |
 | `-NRedNoSubmitGuard` | Disable the otherwise-default Metal SubmitGuard and its LegacyBlend path |
 | `-NRedDPFix` | Opt into the guarded DisplayPort recovery candidate on the inspected Renoir/Sonoma build |

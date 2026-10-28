@@ -11,23 +11,33 @@ def main():
  p=argparse.ArgumentParser(description=__doc__)
  p.add_argument('--compile-log',type=Path,required=True)
  p.add_argument('--out',type=Path,required=True)
+ p.add_argument('--media-adapter',action='store_true',help='Include the private media adapter translation unit and direct calls across it')
  a=p.parse_args();a.out.mkdir(parents=True,exist_ok=True)
  text=re.sub(r'\x1b\[[0-9;]*m','',a.compile_log.read_text())
- command=next(shlex.split(line) for line in text.splitlines() if line.startswith('/') and 'clang++ -c ' in line and line.endswith('NootedRed/UserPatches.cpp'))
- pos=command.index('-o');del command[pos:pos+2];command.remove('-c');command.remove('NootedRed/UserPatches.cpp')
- obj=a.out/'UserPatches.o';ir=a.out/'UserPatches.ll'
- commands=[command+['-c','-fstack-usage','NootedRed/UserPatches.cpp','-o',str(obj)],command+['-S','-emit-llvm','NootedRed/UserPatches.cpp','-o',str(ir)]]
- for command in commands:
-  with (a.out/'compile.log').open('a') as log:subprocess.run(command,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,check=True,timeout=90)
- frames={}
- for line in obj.with_suffix('.su').read_text().splitlines():
-  name,size,kind=line.split('\t');frames[name.rsplit(':',1)[-1]]=(int(size),kind)
- edges={};current=None
+ candidates=[shlex.split(line) for line in text.splitlines() if line.startswith('/') and 'clang++ -c ' in line
+             and line.endswith(('NootedRed/UserPatches.cpp','NootedRed/MediaSafety.cpp'))]
+ if not candidates:raise SystemExit('No UserPatches/MediaSafety compile command in supplied log')
+ command=candidates[0]
+ pos=command.index('-o');del command[pos:pos+2];command.remove('-c');command.pop() # source
+ sources=['UserPatches']+(['MediaSafety'] if a.media_adapter else [])
+ commands=[];frames={};edges={}
  def symbols(line):return [a or b for a,b in re.findall(r'@(?:"([^"]+)"|([^\s(]+))\(',line)]
- for line in ir.read_text().splitlines():
-  if line.startswith('define '):current=symbols(line)[0];edges[current]=set()
-  elif line=='}':current=None
-  elif current and re.search(r'\b(call|invoke)\b',line):edges[current].update(symbols(line))
+ for source in sources:
+  obj=a.out/(source+'.o');ir=a.out/(source+'.ll');path='NootedRed/'+source+'.cpp'
+  steps=[command+['-c','-fstack-usage',path,'-o',str(obj)],command+['-S','-emit-llvm',path,'-o',str(ir)]]
+  commands.extend(steps)
+  for step in steps:
+   with (a.out/'compile.log').open('a') as log:subprocess.run(step,cwd=ROOT,stdout=log,stderr=subprocess.STDOUT,check=True,timeout=90)
+  for line in obj.with_suffix('.su').read_text().splitlines():
+   name,size,kind=line.split('\t');name=name.rsplit(':',1)[-1]
+   assert kind=='static',(name,kind)
+   # Inline/template definitions can be emitted by both units. Keep the larger frame.
+   frames[name]=max(frames.get(name,(0,'static')),(int(size),kind))
+  current=None
+  for line in ir.read_text().splitlines():
+   if line.startswith('define '):current=symbols(line)[0];edges.setdefault(current,set())
+   elif line=='}':current=None
+   elif current and re.search(r'\b(call|invoke)\b',line):edges[current].update(symbols(line))
  def longest(name,parents=frozenset()):
   if name in parents:raise AssertionError('Recursive internal call chain: '+name)
   size,kind=frames[name];assert kind=='static',(name,kind)

@@ -23,6 +23,8 @@
 #include <VDASignaturePlanner.hpp>
 #include <VideoPolicy.hpp>
 #include <VDATableSelection.hpp>
+#include <MediaSafety.hpp>
+#include <MediaSafetyPolicy.hpp>
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
@@ -678,7 +680,15 @@ void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t
 void UserPatches::processPatcher(KernelPatcher& patcher)
 {
     NRed::singleton().setProp32("NRedVDAResolverRequested", this->vdaResolverEnabled ? 1 : 0);
-    if (this->submitGuardEnabled || this->legacyBlendEnabled) {
+    const auto* const profile = DeviceProfile::current();
+    const bool vdaAllowed = this->vdaEnabled && profile != nullptr && profile->media.hasVCN0
+                            && profile->media.vcnGeneration == DeviceProfile::kVcn2_2
+                            && !NRed::singleton().hasExternalVideo();
+    this->mediaSafetyEnabled = vdaAllowed && MediaSafetyPolicy::eligible(checkKernelArgument("-NRedVCNSafety"),
+        osversion,currentKernelVersion().major(),NRed::singleton().getDeviceID());
+    NRed::singleton().setProp32("NRedVCNSafetyOwnsMedia",this->mediaSafetyEnabled?1:0);
+    if (this->mediaSafetyEnabled) { this->vdaResolverEnabled=false; }
+    if (this->submitGuardEnabled || this->legacyBlendEnabled || this->mediaSafetyEnabled) {
         this->installSubmitGuard(patcher);
     }
 
@@ -687,7 +697,6 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
         return;
     }
 
-    const auto* const profile = DeviceProfile::current();
     auto              glEnabled = this->enabled;
     if (profile != nullptr) {
         SYSLOG("UserPatch", "Device profile: %s (family %s, level %s)", profile->name,
@@ -722,9 +731,6 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
     // and newer, where the native backend is the one being used.  The profile is the single source of truth
     // for the target: a VCN 2.x device whose profile enables the engine may receive the user-space VA tables
     // (the VCN 2.x profiles, with 0x1638 as the validated target).
-    const auto vdaAllowed = this->vdaEnabled && profile != nullptr && profile->media.hasVCN0
-                            && profile->media.vcnGeneration == DeviceProfile::kVcn2_2
-                            && !NRed::singleton().hasExternalVideo();
     if (this->vdaEnabled && !vdaAllowed) {
         SYSLOG("UserPatch", "VDA patches requested but this profile does not enable the validated VCN 2.x target");
     }
@@ -744,7 +750,7 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
         };
 
         if (glEnabled) { append(this->patches, this->patchCount, false); }
-        if (vdaAllowed) {
+        if (vdaAllowed && !this->mediaSafetyEnabled) {
             const bool specific = VDATableSelection::hasSpecific(this->vdaTables, this->vdaTableCount, osversion);
             NRed::singleton().setProp32("NRedVDATableRevision", specific ? 2 : 1);
             for (size_t i = 0; i < this->vdaTableCount; ++i) {
@@ -1439,7 +1445,7 @@ __attribute__((noinline)) int UserPatches::wrapSharedRegionCheck(proc_t process,
 {
     auto& patches = singleton();
     const auto result = FunctionCast(wrapSharedRegionCheck, patches.orgSharedRegionCheck)(process, args, returnValue);
-    if (result == 0 && (patches.submitGuardEnabled || patches.legacyBlendEnabled) && args != nullptr) {
+    if (result == 0 && (patches.submitGuardEnabled || patches.legacyBlendEnabled || patches.mediaSafetyEnabled) && args != nullptr) {
         const auto map = getTaskMapFunc ? getTaskMapFunc(current_task()) : nullptr;
         UserPatchMapGate::Lease<64> lease(cachePatchMaps, cachePatchLock, map, current_thread());
         if (lease) {
@@ -1483,6 +1489,9 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
         || !UserSharedCacheData::matches(kernelMajor, cacheHeader)) {
         NRed::singleton().setProp32("NRedSubmitGuardRejected", 1);
         return;
+    }
+    if (this->mediaSafetyEnabled && VCNBridge::singleton().loadReady() && !isFairPlayClient(current_task())) {
+        MediaSafety::install(map,base,process?proc_pid(process):0);
     }
     // Independent of SubmitGuard installation success and repeated shared-region checks.
     if (this->legacyBlendEnabled) { this->applyLegacyBlend(map, base, process); }
@@ -1651,6 +1660,9 @@ bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
         return false;
     }
 
+    if (this->mediaSafetyEnabled && !MediaSafety::configure(copyInFunc,copyOutFunc,queryRegionFunc)) {
+        SYSLOG("UserPatch","Private video safety adapter unavailable; media remains stock");
+    }
     // Allocate once, before publishing the hook. Keep this lock alive for the boot,
     // including a routing failure: no request can observe a freed gate.
     if (cachePatchLock == nullptr) { cachePatchLock = IOLockAlloc(); }
