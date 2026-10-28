@@ -8,8 +8,11 @@ ROOT=Path(__file__).resolve().parents[1]
 SHIM=r'''
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <initializer_list>
+#include <VDATableSelection.hpp>
+char osversion[32]="24H232";
 using UInt32=uint32_t;using UInt64=uint64_t;using UInt8=uint8_t;
 #define SYSLOG(...) do{}while(0)
 #define DBGLOG(...) do{}while(0)
@@ -38,7 +41,7 @@ public:
  const int* signatures=nullptr;unsigned signatureCount=0;
  const PagePatch* patches=nullptr;unsigned patchCount=0,nativePatchCount=0;
  bool nativePatchIsVDA[64]{};PagePatch nativePatches[64];
- struct Table{const PagePatch* table;unsigned count;};Table vdaTables[1];unsigned vdaTableCount=0;
+ struct Table{const PagePatch* table;unsigned count;const char* build=nullptr;};Table vdaTables[4];unsigned vdaTableCount=0;
  unsigned nativeHooks=0,cacheHooks=0;
  void installSubmitGuard(KernelPatcher&){++cacheHooks;}
  bool installNativePagePatcher(KernelPatcher&){++nativeHooks;return true;}
@@ -62,6 +65,15 @@ int main(){KernelPatcher k;unsigned cases=0;
   if(gl&&major>=23&&!video&&!blend)assert(p.nativePatchCount==0&&p.nativeHooks==1);
   ++cases;
  }
+ // A target build selects both matching tables and excludes defaults without
+ // increasing page capacity. Unknown/empty builds retain the previous fallback.
+ for(const char* build : {"24H232","24H32","24H232x",""}) {
+  std::strcpy(osversion,build);version.v=24;UserPatches p;p.enabled=false;p.vdaEnabled=true;
+  static UserPatches::PagePatch fallback[]={{false,true}};
+  static UserPatches::PagePatch target1[]={{false,true},{false,true}},target2[]={{false,true}};
+  p.vdaTables[0]={fallback,1,nullptr};p.vdaTables[1]={target1,2,"24H232"};p.vdaTables[2]={target2,1,"24H232"};p.vdaTableCount=3;
+  p.processPatcher(k);assert(p.nativePatchCount==(!std::strcmp(build,"24H232")?3:1));
+ }
  printf("production installation: %u GL/blend/submit/video/OS combinations; GL-only zero-table hooks retained\n",cases);
 }
 '''
@@ -69,6 +81,6 @@ def main():
  source=(ROOT/'NootedRed/UserPatches.cpp').read_text()
  with tempfile.TemporaryDirectory(prefix='nred-install-') as t:
   p=Path(t);(p/'test.cpp').write_text(SHIM+method(source,'void UserPatches::processPatcher(')+CASES)
-  subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-fsanitize=address,undefined',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+  subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++17','-fsanitize=address,undefined','-I'+str(ROOT/'NootedRed'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
   subprocess.run([str(p/'test')],check=True)
 if __name__=='__main__':main()

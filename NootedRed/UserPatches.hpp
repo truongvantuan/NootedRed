@@ -186,7 +186,7 @@ public:
 
     // Adds the -NRedVDA user-space patch table (VA driver / AppleGVA).  Same storage/lifetime rules as
     // `registerGLDriverFix`.  Applied in addition to the selected GL patch set.
-    void registerVDAFix(const PagePatch* patchTable, size_t count);
+    void registerVDAFix(const PagePatch* patchTable, size_t count, const char* build = nullptr);
 
     // Installs the native page patch backend.  Called from `NRed::processPatcher` once the device ID and
     // profile are known (it must run before user processes validate pages).
@@ -258,9 +258,10 @@ private:
     {
         const PagePatch* table{nullptr};
         size_t           count{0};
+        const char* build{nullptr};
     };
 
-    PatchTable vdaTables[2]{};
+    PatchTable vdaTables[4]{};
     size_t     vdaTableCount{0};
 
     PagePatch nativePatches[kMaxNativePatches]{};

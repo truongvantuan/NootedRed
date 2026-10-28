@@ -90,6 +90,14 @@ GVA_INFO_PLIST = Path("System/Library/PrivateFrameworks/AppleGVA.framework/Versi
 # and AppleGVA image UUID it supports, plus the branch form the selection
 # function was compiled into.
 PROFILES = {
+    ("15.8.2", "24H232"): {
+        "cache_uuid": "90DB0DEB23443601B011B87312D74CFB",
+        "gva_version": "113.56",
+        "gva_image_uuid": "BCB9A0BE8EB3361AB5B124767FFC1774",
+        "branch_form": "sequoia",
+        "namespace_suffix": "Sequoia24H232",
+        "evidence_doc": "analysis/vda-1582-gva-data.md",
+    },
     ("13.6.4", "22G513"): {
         "cache_uuid": "7FE9478F8955356CAC515C6FFC253B95",
         "gva_version": "113.54.1",

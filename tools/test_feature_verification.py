@@ -97,6 +97,29 @@ bad=deepcopy(video_snapshot);bad['video_pages']['0x30864c000']=arrays['kVAEncode
 assert not all(validate_video_cache(bad,arrays,24).values())
 assert not all(validate_video_cache(video_snapshot,arrays,25).values())
 assert not all(validate_video_cache({},arrays,24).values())
+# 24H232 references are independent of 24H32; include the relocated GVA page.
+new_va_text=(ROOT/'NootedRed/VDAVADataSequoia24H232.hpp').read_text()
+new_arrays,new_records=parse_header(new_va_text)
+new_offsets=[int(v,16) for v in re.findall(r'// Page \d+:.*?image offset 0x([0-9A-Fa-f]+)',new_va_text)]
+new_pages={f'Page{i}':bytearray(new_arrays[f'Page{i}']) for i in range(len(new_offsets))}
+for record,line in zip(new_records,re.findall(r'// Sites: (.*?) \(page offset',new_va_text)):
+    for address in re.findall(r'0x[0-9a-f]+',line):
+        off=int(address,16)&4095;replacement=new_arrays[record['replace']]
+        new_pages[record['page']][off:off+len(replacement)]=replacement
+new_video={'cache_uuid_hex':'90db0deb23443601b011b87312d74cfb','video_pages':{
+    hex(0x308606000+offset):new_pages[f'Page{i}'].hex() for i,offset in enumerate(new_offsets)}}
+gva_arrays,_=parse_header((ROOT/'NootedRed/VDAGVADataSequoia24H232.hpp').read_text())
+gva_page=bytearray(gva_arrays['Page0']);assert gva_page[0x41b:0x421]==bytes.fromhex('0f84d6030000')
+gva_page[0x41b:0x421]=bytes.fromhex('0f842a000000');new_video['video_pages']['0x206696000']=gva_page.hex()
+assert len(validate_video_cache(new_video,arrays,24))==11
+assert all(validate_video_cache(new_video,arrays,24).values())
+for key in new_video['video_pages']:
+    bad=deepcopy(new_video);bad['video_pages'][key]='ff'+bad['video_pages'][key][2:]
+    assert not all(validate_video_cache(bad,arrays,24).values()),key
+    bad=deepcopy(new_video);del bad['video_pages'][key]
+    assert not all(validate_video_cache(bad,arrays,24).values()),key
+bad=deepcopy(new_video);bad['cache_uuid_hex']='42ec2890bc40317ebb2745142bff7f26'
+assert not all(validate_video_cache(bad,arrays,24).values())
 assert properties('  "NRedSubmitGuardVersion" = 2\n "NRedLegacyBlendApplied" = 1609')=={
     'NRedSubmitGuardVersion':2,'NRedLegacyBlendApplied':1609}
 # A previous boot's real sleep and display/wake requests cannot verify this boot.

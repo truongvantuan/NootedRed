@@ -30,7 +30,8 @@ struct Decoded {
 
 static NSDictionary* videoCacheSnapshot() {
     NSMutableDictionary* report = [cacheSnapshot() mutableCopy];
-    if (![report[@"cache_uuid_hex"] isEqualToString:@"42ec2890bc40317ebb2745142bff7f26"]) return report;
+    if (![report[@"cache_uuid_hex"] isEqualToString:@"42ec2890bc40317ebb2745142bff7f26"]
+        && ![report[@"cache_uuid_hex"] isEqualToString:@"90db0deb23443601b011b87312d74cfb"]) return report;
     auto getRange = reinterpret_cast<const void*(*)(size_t*)>(dlsym(RTLD_DEFAULT,"_dyld_get_shared_cache_range"));
     size_t size=0;uint64_t base=getRange ? reinterpret_cast<uint64_t>(getRange(&size)) : 0;
     if (!base) return report;
@@ -41,6 +42,9 @@ static NSDictionary* videoCacheSnapshot() {
                            0x30864c000ULL,0x30864d000ULL,0x30864f000ULL,
                            0x308650000ULL,0x308667000ULL,0x30867d000ULL}) {
         pages[[NSString stringWithFormat:@"0x%llx",static_cast<unsigned long long>(offset)]] = readHex(base+offset,4096);
+    }
+    if ([report[@"cache_uuid_hex"] isEqualToString:@"90db0deb23443601b011b87312d74cfb"]) {
+        pages[@"0x206696000"]=readHex(base+0x206696000ULL,4096);
     }
     report[@"video_pages"] = pages;
     return report;

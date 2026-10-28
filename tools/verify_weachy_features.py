@@ -332,10 +332,12 @@ def deployment_video_profile_matches(deployment, mode, props):
 
 def validate_video_cache(snapshot, arrays, major):
     """Compare all actual VA pages, including feedback consumers and source pitch."""
-    if major!=24 or snapshot.get('cache_uuid_hex')!='42ec2890bc40317ebb2745142bff7f26':
+    profiles={'42ec2890bc40317ebb2745142bff7f26':'Sequoia','90db0deb23443601b011b87312d74cfb':'Sequoia24H232'}
+    suffix=profiles.get(snapshot.get('cache_uuid_hex'))
+    if major!=24 or not suffix:
         return {'supported_video_reference':False}
     from gen_vda_va_data import parse_header
-    text=(ROOT/'NootedRed/VDAVADataSequoia.hpp').read_text()
+    text=(ROOT/f'NootedRed/VDAVAData{suffix}.hpp').read_text()
     references,records=parse_header(text)
     image_base=int(re.search(r'ImageBase = (0x[0-9A-Fa-f]+)',text)[1],16)
     offsets=[int(value,16) for value in re.findall(r'// Page \d+:.*?image offset 0x([0-9A-Fa-f]+)',text)]
@@ -351,9 +353,22 @@ def validate_video_cache(snapshot, arrays, major):
             if len(chosen)!=record['count']:return {'reference_table_consistent':False}
             for position in chosen:page[position:position+len(find)]=replace
         expected[hex(image_base+offset-0x7ff800000000)]=bytes(page)
-    pitch=bytearray(arrays['kVAEncodePitchPage_Sequoia'])
-    if pitch[0xaf5:0xaf5+37]!=arrays['kVAEncodePitchFind']:return {'reference_pitch_consistent':False}
-    pitch[0xaf5:0xaf5+37]=arrays['kVAEncodePitchReplace'];expected['0x30864c000']=bytes(pitch)
+    if suffix=='Sequoia':
+        pitch=bytearray(arrays['kVAEncodePitchPage_Sequoia'])
+        if pitch[0xaf5:0xaf5+37]!=arrays['kVAEncodePitchFind']:return {'reference_pitch_consistent':False}
+        pitch[0xaf5:0xaf5+37]=arrays['kVAEncodePitchReplace'];expected['0x30864c000']=bytes(pitch)
+    else:
+        gva_text=(ROOT/f'NootedRed/VDAGVAData{suffix}.hpp').read_text()
+        gva_arrays,gva_records=parse_header(gva_text)
+        gva_page=bytearray(gva_arrays['Page0'])
+        for record in gva_records:
+            find=gva_arrays[record['find']];replace=gva_arrays[record['replace']]
+            positions=[m.start() for m in re.finditer(re.escape(find),gva_page)]
+            chosen=positions[record['skip']:record['skip']+record['count']]
+            if len(chosen)!=record['count']:return {'reference_gva_consistent':False}
+            for position in chosen:gva_page[position:position+len(find)]=replace
+        address=int(re.search(r'// source page: (0x[0-9a-f]+)',gva_text)[1],16)
+        expected[hex(address-0x7ff800000000)]=bytes(gva_page)
     observed=snapshot.get('video_pages',{})
     return {'supported_video_reference':True,**{f'VA_page_{key}_matches':observed.get(key)==value.hex() for key,value in expected.items()}}
 

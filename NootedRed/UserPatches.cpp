@@ -22,6 +22,7 @@
 
 #include <VDASignaturePlanner.hpp>
 #include <VideoPolicy.hpp>
+#include <VDATableSelection.hpp>
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
@@ -52,6 +53,7 @@
 static UserPatches moduleInstance;
 
 extern "C" {
+    extern char osversion[];
     int proc_pid(proc_t);
     void proc_name(int, char*, int);
     proc_t current_proc(void);
@@ -661,7 +663,7 @@ void UserPatches::selectPatchSet()
     }
 }
 
-void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t count)
+void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t count, const char* build)
 {
     if (patchTable == nullptr || count == 0) { return; }
 
@@ -670,7 +672,7 @@ void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t
         return;
     }
 
-    this->vdaTables[this->vdaTableCount++] = {patchTable, count};
+    this->vdaTables[this->vdaTableCount++] = {patchTable, count, build};
 }
 
 void UserPatches::processPatcher(KernelPatcher& patcher)
@@ -743,7 +745,10 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
 
         if (glEnabled) { append(this->patches, this->patchCount, false); }
         if (vdaAllowed) {
+            const bool specific = VDATableSelection::hasSpecific(this->vdaTables, this->vdaTableCount, osversion);
+            NRed::singleton().setProp32("NRedVDATableRevision", specific ? 2 : 1);
             for (size_t i = 0; i < this->vdaTableCount; ++i) {
+                if (!VDATableSelection::selected(this->vdaTables[i], specific, osversion)) { continue; }
                 append(this->vdaTables[i].table, this->vdaTables[i].count, true);
             }
         }

@@ -61,6 +61,8 @@
 // produced by tools/gen_vda_*_data.py and are committed with this branch; the VCN bridge itself does
 // not depend on them, but VDA user-space patching is a no-op if they are absent.
 #include <VDAVADataVentura.hpp>
+#include <VDAVADataSequoia24H232.hpp>
+#include <VDAGVADataSequoia24H232.hpp>
 #include <VDAGVADataVentura.hpp>
 #if __has_include(<VDAVADataSonoma.hpp>)
 #include <VDAVADataSonoma.hpp>
@@ -137,6 +139,10 @@ void NRed::init()
         }
 #endif
     } else if (getKernelVersion() == KernelVersion::Sequoia) {
+        UserPatches::singleton().registerVDAFix(VDAVADataSequoia24H232::Patches,
+                                               arrsize(VDAVADataSequoia24H232::Patches), "24H232");
+        UserPatches::singleton().registerVDAFix(VDAGVADataSequoia24H232::Patches,
+                                               arrsize(VDAGVADataSequoia24H232::Patches), "24H232");
 #if __has_include(<VDAVADataSequoia.hpp>)
         if constexpr ((sizeof(VDAVADataSequoia::Patches) / sizeof(VDAVADataSequoia::Patches[0])) > 0) {
             UserPatches::singleton().registerVDAFix(VDAVADataSequoia::Patches,
