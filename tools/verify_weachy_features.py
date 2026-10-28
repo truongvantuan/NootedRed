@@ -308,6 +308,13 @@ def opencore_log_evidence(text, boot_epoch):
         current_boot_injection_failures=failures if fits else None)
     return result
 
+def video_mode(args):
+    """Canonical legacy test profile, matching the shared default/opt-out policy."""
+    if '-NRedNoVDA' in args:return None
+    if '-NRedNoHEVC' in args or '-NRedAVC' in args:return '-NRedAVC'
+    if '-NRedAVCEncode' in args:return '-NRedAVCEncode'
+    return '-NRedVDA'
+
 def video_exercises(mode):
     """Exercise allowed hardware codecs and actual automatic software fallback."""
     if mode not in ('-NRedVDA','-NRedAVC','-NRedAVCEncode'):return []
@@ -332,7 +339,7 @@ def validate_video_cache(snapshot, arrays, major):
     references,records=parse_header(text)
     image_base=int(re.search(r'ImageBase = (0x[0-9A-Fa-f]+)',text)[1],16)
     offsets=[int(value,16) for value in re.findall(r'// Page \d+:.*?image offset 0x([0-9A-Fa-f]+)',text)]
-    if len(offsets)!=8 or len(records)!=9:return {'reference_table_consistent':False}
+    if len(offsets)!=9 or len(records)!=10:return {'reference_table_consistent':False}
     expected={}
     for index,offset in enumerate(offsets):
         name=f'Page{index}';page=bytearray(references[name])
@@ -514,9 +521,9 @@ def main():
     props=properties(raw['stdout'])
     summary={'captured_at':now.isoformat(),'boot_epoch':epoch,'boot_session_uuid':boot_uuid,'Darwin':darwin,'boot_args':args,
              'loaded_NootedRed_UUID':uuid,'NRed_properties':props,'exercises':[],
-             'GLFix_requested':'-NRedGLFix' in args and '-NRedGLFixOff' not in args,
+             'GLFix_requested':'-NRedNoGLFix' not in args and '-NRedGLFixOff' not in args,
              'SubmitGuard_opted_out':'-NRedNoSubmitGuard' in args,
-             'video_mode':next((x for x in ('-NRedAVC','-NRedAVCEncode','-NRedVDA') if x in args),None),
+             'video_mode':video_mode(args),
              'GfxOff_hold_requested':'-NRedVCNNoGfxOff' in args}
     summary['VM_trace_requested']='-NRedVMTrace' in args
     summary['VM_trace_version']=props.get('NRedVMTraceVersion',1) if summary['VM_trace_requested'] else None

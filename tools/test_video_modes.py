@@ -23,6 +23,7 @@ def main():
 #include <string>
 #include <cstring>
 #include <UserSubmitGuard.hpp>
+#include <VideoPolicy.hpp>
 #define DBGLOG(...) do {} while (0)
 const char* args = "";
 bool checkKernelArgument(const char* arg) {
@@ -46,8 +47,12 @@ int main() {
 
     struct Case { const char* flags; bool requested, avc, encode; };
     for (const auto c : {
-        Case{"", false, false, false},
+        Case{"", true, false, true},
         Case{"-NRedVDA", true, false, true},
+        Case{"-NRedNoVDA", false, false, false},
+        Case{"-NRedNoVDA -NRedVDA -NRedAVCEncode", false, false, false},
+        Case{"-NRedNoHEVC", true, true, false},
+        Case{"-NRedNoHEVC -NRedAVCEncode", true, true, false},
         Case{"-NRedAVC", true, true, false},
         Case{"-NRedAVCEncode", true, true, true},
         Case{"-NRedVDA -NRedAVC", true, true, false},
@@ -59,8 +64,8 @@ int main() {
         assert(v.requested == c.requested && v.avcOnly == c.avc && v.hevcEncodeAllowed == c.encode);
     }
     for (const char* flags : {"-NRedHEVC10", "-NRedVDA -NRedHEVC10", "-NRedAVC -NRedHEVC10"}) {
-        args=flags; VDA v; v.init(); assert(v.hevc10Allowed);
-        assert(v.requested == (std::string(flags).find("-NRedVDA")!=std::string::npos || std::string(flags).find("-NRedAVC")!=std::string::npos));
+        args=flags; VDA v; v.init(); assert(v.hevc10Allowed == !v.avcOnly);
+        assert(v.requested);
     }
     assert(!(GPU{false, false}.hasExternalVideo()));
     assert(!(GPU{false, true}.hasExternalVideo()));

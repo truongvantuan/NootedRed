@@ -140,7 +140,7 @@ def parse_page_patches(text: str, label: str) -> tuple[int, int, set[str]]:
     entries = []
     for entry in re.finditer(
         r"\{UserPatcher::FileSegment::SegmentTextText,\s*(\w+),\s*(\w+),\s*(\w+),\s*"
-        r"sizeof\((\w+)\),\s*(\d+),\s*(\d+)\}",
+        r"sizeof\((\w+)\),\s*(\d+),\s*(\d+)(?:,\s*(?:true|false)){0,2}\}",
         match.group(1),
     ):
         page_name, find_name, replace_name, size_name, skip, count = entry.groups()
@@ -202,15 +202,15 @@ def main() -> int:
     print("bridge: exact-build VCNData lookup present")
 
     page_cases = {
-        "Ventura VA": (ROOT / "NootedRed/VDAVADataVentura.hpp", "13.6.4", 8, 11),
+        "Ventura VA": (ROOT / "NootedRed/VDAVADataVentura.hpp", "13.6.4", 9, 12),
         "Ventura GVA": (ROOT / "NootedRed/VDAGVADataVentura.hpp", "13.6.4", 1, 1),
-        "Sequoia VA": (ROOT / "NootedRed" / "VDAVAData.hpp", "15.8.1", 9, 12),
-        "Sonoma VA": (ROOT / "NootedRed" / "VDAVADataSonoma.hpp", "14.8.9", 9, 12),
+        "Sequoia VA": (ROOT / "NootedRed" / "VDAVAData.hpp", "15.8.1", 10, 13),
+        "Sonoma VA": (ROOT / "NootedRed" / "VDAVADataSonoma.hpp", "14.8.9", 10, 13),
         "Sequoia GVA": (ROOT / "NootedRed" / "VDAGVAData.hpp", "15.8.1", 1, 1),
         "Sonoma GVA": (ROOT / "NootedRed" / "VDAGVADataSonoma.hpp", "14.8.9", 1, 1),
     }
     page_cases.update({
-        "Tahoe VA": (ROOT / "NootedRed/VDAVADataTahoe.hpp", "26.7.1", 10, 12),
+        "Tahoe VA": (ROOT / "NootedRed/VDAVADataTahoe.hpp", "26.7.1", 11, 13),
         "Tahoe GVA": (ROOT / "NootedRed/VDAGVADataTahoe.hpp", "26.7.1", 1, 1),
     })
     for label, (path, build, expected_records, expected_sites) in page_cases.items():

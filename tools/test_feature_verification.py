@@ -13,6 +13,11 @@ from test_gl_semantic_data import load_arrays
 from verify_weachy_features import expected_gl_pages,validate_cache,validate_video_cache,video_exercises,deployment_video_profile_matches,parse_boot_session,command,properties,KernelEvidence,vm_trace_events,embedded_signature_command,vm_trace_ready,vm_mapping_details,traced_gl_command,sleep_evidence,report_time,report_provenance,opencore_log_evidence
 
 ROOT=Path(__file__).resolve().parents[1]
+from verify_weachy_features import video_mode
+assert video_mode([])=='-NRedVDA'
+assert video_mode(['-NRedNoVDA','-NRedVDA']) is None
+assert video_mode(['-NRedNoHEVC','-NRedAVCEncode'])=='-NRedAVC'
+assert video_mode(['-NRedAVCEncode'])=='-NRedAVCEncode'
 arrays=load_arrays(ROOT/'NootedRed/UserPatches.cpp')
 for mode,decode_fallback,encode_fallback in [('-NRedVDA',False,False),('-NRedAVC',True,True),('-NRedAVCEncode',True,False)]:
     plan=video_exercises(mode)

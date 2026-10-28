@@ -27,13 +27,13 @@ struct DeviceProfile {
  static const DeviceProfile* current(){static DeviceProfile p;return &p;}
 };
 struct NRed {static NRed& singleton(){static NRed n;return n;}bool hasExternalVideo()const{return false;}
- unsigned getDeviceID()const{return 0x1636;}};
+ unsigned getDeviceID()const{return 0x1636;}void setProp32(const char*,unsigned){}};
 struct UserOpenGL {static inline unsigned inits=0;static void init(unsigned,unsigned,bool,bool){++inits;}};
 class UserPatches {
 public:
  struct PagePatch {bool glDriver=false,exactOnly=false;};
  static constexpr unsigned kMaxNativePatches=64;
- bool submitGuardEnabled=true,legacyBlendEnabled=true,enabled=true,vdaEnabled=false;
+ bool submitGuardEnabled=true,legacyBlendEnabled=true,enabled=true,vdaEnabled=false,vdaResolverEnabled=false;
  bool resolverEnabled=true,resolverOnly=false,semanticEnabled=true,semanticMTLEnabled=true,pageLocalGL=false;
  const int* signatures=nullptr;unsigned signatureCount=0;
  const PagePatch* patches=nullptr;unsigned patchCount=0,nativePatchCount=0;

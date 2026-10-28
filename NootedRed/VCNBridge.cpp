@@ -20,6 +20,7 @@
 // You should have received a copy of the ChefKiss Open Knowledge License
 // along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowledge/raw/branch/master/LICENSE-v1.md.
 
+#include <VideoPolicy.hpp>
 #include <DeviceProfile.hpp>
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_iokit.hpp>
@@ -48,9 +49,6 @@ static VCNBridge moduleInstance;
 namespace
 {
 
-    const char* const kBootArgVDA = "-NRedVDA";
-    const char* const kBootArgAVC = "-NRedAVC";
-    const char* const kBootArgAVCEncode = "-NRedAVCEncode";
     // Diagnostic: keep the X5000 GFXOFF state disabled while the bridged VCN0 engine is active.
     const char* const kBootArgNoGfxOff = "-NRedVCNNoGfxOff";
     const char* const kBootArgNoDrain = "-NRedVCNNoDrain";
@@ -192,7 +190,7 @@ VCNBridge& VCNBridge::singleton() { return moduleInstance; }
 
 void VCNBridge::init()
 {
-    this->requested = checkKernelArgument(kBootArgVDA) || checkKernelArgument(kBootArgAVC) || checkKernelArgument(kBootArgAVCEncode);
+    this->requested = VideoPolicy::resolve(checkKernelArgument).requested;
     this->noGfxOff = this->requested && checkKernelArgument(kBootArgNoGfxOff);
     this->noDrain = this->requested && checkKernelArgument(kBootArgNoDrain);
     this->traceContexts = this->requested && checkKernelArgument("-NRedVCNTrace");

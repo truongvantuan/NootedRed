@@ -41,8 +41,8 @@
 //    `kPageSize` page image is the primary match; the contextual site, semantic and signature
 //    backends provide fallbacks for nearby builds. See docs/Combined-Fork.md for their guards.
 //
-// The GL table is gated by `-NRedGLFix`/`-NRedGLFixOff`; the optional VA/AppleGVA tables are a separate
-// `-NRedVDA` / `-NRedAVC` opt-in and only apply on supported VCN2 profiles after the kernel bridge is ready.
+// GLFix and VDA default on with -NRedNoGLFix / -NRedNoVDA opt-outs. VDA keeps
+// legacy AVC modes, the Main10 opt-in guard, and validated VCN2/bridge/page gates.
 // Both log under the `UserPatch` tag.
 class UserPatches
 {
@@ -98,6 +98,8 @@ public:
         UInt64       pageOffset;
         // GL signatures also require the named driver; application code must never be patched.
         bool         glDriver{false};
+        const UInt8* find{nullptr};
+        size_t       findSize{0};
     };
 
     // Lookup-style patch for one user-space Mach-O image.
@@ -237,6 +239,7 @@ private:
     const SignaturePatch* signatures{nullptr};
     size_t                signatureCount{0};
     size_t                signatureApplied[kMaxSignatures]{};
+    bool                  vdaResolverEnabled{false};
     bool                  resolverEnabled{false};
     bool                  resolverOnly{false};
 
@@ -287,6 +290,7 @@ private:
     auto buildNativePatches() -> bool;
     void patchNativePage(const void* data, UInt64 pageOffset, void* vnode, bool cachePage);
     void patchGLBudgetPage(const void* data, UInt64 pageOffset);
+    void patchVDASignaturePage(const void* data, UInt64 pageOffset, void* vnode, bool cachePage);
     void patchSignaturePage(const void* data, UInt64 pageOffset, void* vnode);
 
     // Generic semantic backend: matches instruction-context windows instead of full page images.  Returns

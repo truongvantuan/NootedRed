@@ -80,7 +80,8 @@ enum class KernelVersion { Sonoma = 23, Sequoia = 24, Tahoe = 25 };
 PenguinWizardry::KernelVersion version(23, 6);
 auto currentKernelVersion() { return version; }
 auto getKernelVersion() { return static_cast<KernelVersion>(version.major()); }
-constexpr bool kGLFixDefaultEnabled = false;
+constexpr bool kGLFixDefaultEnabled = true;
+#include "VideoPolicy.hpp"
 const int kGLDriverPatches_Ventura[] = {22}, kGLDriverPatches_Sonoma[] = {23}, kGLDriverPatches_Sequoia[] = {24}, kGLDriverPatches_Tahoe[] = {25};
 constexpr size_t kGLDriverPatchCount_Ventura = 1, kGLDriverPatchCount_Sonoma = 1, kGLDriverPatchCount_Sequoia = 1, kGLDriverPatchCount_Tahoe = 1;
 const int kResolverSignatures_Ventura[] = {22}, kResolverSignatures[] = {24}, kResolverSignatures_Sonoma[] = {23}, kResolverSignatures_Tahoe[] = {25};
@@ -128,6 +129,7 @@ public:
     NativePage nativePages[1]{};
     size_t nativePageCount = 0;
     SInt32 vdaAppliedCount = 0;
+    bool vdaResolverEnabled = false;
     bool enabled = false, vdaEnabled = false, submitGuardEnabled = false, legacyBlendEnabled = true;
     bool pageLocalGL = false;
     bool resolverOnly = false, resolverEnabled = false;
@@ -139,6 +141,7 @@ public:
     void patchNativePage(const void*, UInt64, void*, bool);
     void patchGLBudgetPage(const void*,UInt64) { ++UserOpenGL::budgetCalls; }
     auto isPatchedPage(const NativePage&, const UInt8*) const -> bool;
+    void patchVDASignaturePage(const void*, UInt64, void*, bool) {}
     void patchSignaturePage(const void*, UInt64, void*) { if (resolverEnabled) resolverCalls++; }
     auto isGLDriverVnode(void*) const -> bool;
     auto isTargetVnode(void*) const -> bool;
@@ -159,6 +162,8 @@ void require(bool condition, const char* label) {
 }
 '''
 
+SHIM = SHIM.replace('#include "VideoPolicy.hpp"', (ROOT/'NootedRed/VideoPolicy.hpp').read_text().replace('#pragma once', ''))
+
 CASES = r'''
 void selection(const char* input, UInt32 major, UInt32 minor, bool semantic, bool metal, const int* patches) {
     args = input;
@@ -177,21 +182,15 @@ void options(const char* input, bool gl, bool vda, bool resolver, bool semantic,
             input);
 }
 int main() {
-    options("", false, false, false, false, false, false);
-    options("-NRedGLFix", true, false, true, true, false, false);
-    options("-NRedGLFix -NRedGLFixOff", false, false, false, false, false, false);
-    options("-NRedGLFix -NRedGLFixResolveOff", true, false, false, true, false, false);
-    options("-NRedGLFix -NRedGLFixNoResolve -NRedGLFixSemanticOff", true, false, false, false, false, false);
-    options("-NRedGLFix -NRedGLFixSemanticMTL", true, false, true, true, true, false);
-    options("-NRedGLFix -NRedGLFixSemanticMTL -NRedGLFixSemanticOff", true, false, true, false, false, false);
-    options("-NRedGLFix -NRedGLFixResolveOnly", true, false, true, true, false, true);
-    options("-NRedGLFix -NRedGLFixResolveOnly -NRedGLFixResolveOff", true, false, false, true, false, false);
-    options("-NRedVDA", false, true, false, false, false, false);
-    options("-NRedAVC", false, true, false, false, false, false);
-    options("-NRedAVCEncode", false, true, false, false, false, false);
-    options("-NRedGLFix -NRedAVC", true, true, true, true, false, false);
+    options("", true, true, true, true, false, false);
+    options("-NRedNoGLFix", false, true, false, false, false, false);
+    options("-NRedNoVDA", true, false, true, true, false, false);
+    options("-NRedNoGLFix -NRedNoVDA", false, false, false, false, false, false);
     options("-NRedGLFix -NRedGLFixOff -NRedVDA", false, true, false, false, false, false);
-    options("-NRedGLFixResolve -NRedGLFixSemanticMTL", false, false, false, false, false, false);
+    options("-NRedGLFix -NRedNoGLFix", false, true, false, false, false, false);
+    options("-NRedGLFix -NRedGLFixResolveOnly", true, true, true, true, false, true);
+    options("-NRedGLFix -NRedGLFixResolveOnly -NRedGLFixResolveOff", true, true, false, true, false, false);
+    options("-NRedGLFix -NRedGLFixSemanticOff", true, true, true, false, false, false);
 
     selection("-NRedGLFix", 23, 6, true, true, kGLDriverPatches_Sonoma);
     selection("-NRedGLFix", 24, 6, true, true, kGLDriverPatches_Sequoia);
@@ -202,7 +201,7 @@ int main() {
     selection("-NRedGLFix -NRedGLFixSemanticMTL -NRedGLFixSemanticOff", 23, 6, false, false, kGLDriverPatches_Sonoma);
     selection("-NRedGLFix -NRedGLFixSemanticOff", 24, 7, false, false, kGLDriverPatches_Sequoia);
     selection("-NRedGLFix -NRedGLFixResolveOff", 23, 6, true, true, kGLDriverPatches_Sonoma);
-    selection("-NRedVDA", 24, 7, false, false, kGLDriverPatches_Sequoia);
+    selection("-NRedVDA", 24, 7, true, true, kGLDriverPatches_Sequoia);
 
     args = "";
     { UserPatches p; p.init(); require(p.submitGuardEnabled, "SubmitGuard defaults on independently of GL/VDA"); }

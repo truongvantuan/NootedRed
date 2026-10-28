@@ -24,9 +24,10 @@
 
 // Runtime policy layer for the VDA/VCN hardware video decode work.
 //
-// `init()` records the opt-in `-NRedVDA` boot argument and `processPatcher()` logs the media capability of
+// VDA defaults on with -NRedNoVDA/-NRedNoHEVC opt-outs. Legacy modes and the
+// explicit -NRedHEVC10 safety override remain supported. processPatcher logs
 // the running device's `DeviceProfile`.  The actual engine/bridge readiness lives in `VCNBridge`; this class
-// only keeps the user intent and the profile view, and remains inert when the boot argument is absent.
+// keeps user intent and the profile view; readiness remains independently guarded.
 class VDA
 {
     bool requested{false};
@@ -44,11 +45,12 @@ public:
     // once the device ID is known.
     void processPatcher();
 
-    // True when the user explicitly opted in with -NRedVDA, -NRedAVC or -NRedAVCEncode.
+    // Enabled by default, unless -NRedNoVDA is present.
     bool isRequested() const { return this->requested; }
 
     // True when the user opted in with -NRedAVC or -NRedAVCEncode (AVC/H.264 decode only, HEVC decode disabled).
     bool isAVCOnly() const { return this->avcOnly; }
+    bool isHEVCDecodeAllowed() const { return this->requested && !this->avcOnly; }
 
     // True when HEVC hardware encode is allowed (-NRedVDA or -NRedAVCEncode, unless -NRedAVC is also set).
     bool isHEVCEncodeAllowed() const { return this->hevcEncodeAllowed; }

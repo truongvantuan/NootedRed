@@ -20,6 +20,8 @@
 // You should have received a copy of the ChefKiss Open Knowledge License
 // along with this work.  If not, see https://git.chefkiss.dev/ChefKiss/OpenKnowledge/raw/branch/master/LICENSE-v1.md.
 
+#include <VDASignaturePlanner.hpp>
+#include <VideoPolicy.hpp>
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
@@ -56,15 +58,13 @@ namespace
 {
 
     const char* const kBootArgGLFix            = "-NRedGLFix";
+    const char* const kBootArgNoGLFix          = "-NRedNoGLFix";
     const char* const kBootArgGLFixOff         = "-NRedGLFixOff";
     const char* const kBootArgGLFixResolveOnly = "-NRedGLFixResolveOnly";
     const char* const kBootArgGLFixResolveOff  = "-NRedGLFixResolveOff";
     const char* const kBootArgGLFixNoResolve   = "-NRedGLFixNoResolve";
     const char* const kBootArgGLFixSemanticMTL = "-NRedGLFixSemanticMTL";
     const char* const kBootArgGLFixSemanticOff = "-NRedGLFixSemanticOff";
-    const char* const kBootArgVDA              = "-NRedVDA";
-    const char* const kBootArgAVC              = "-NRedAVC";
-    const char* const kBootArgAVCEncode        = "-NRedAVCEncode";
     const char* const kBootArgNoSubmitGuard    = "-NRedNoSubmitGuard";
     const char* const kBootArgSubmitGuard      = "-NRedSubmitGuard";
     const char* const kBootArgNoLegacyBlend    = "-NRedNoLegacyBlend";
@@ -179,7 +179,7 @@ namespace
 
     // The patch bytes and page images below are specific to one driver build, and the native backend hooks
     // code signing page validation, so this is opt-in until the table has been filled in and tested.
-    constexpr bool kGLFixDefaultEnabled = false;
+    constexpr bool kGLFixDefaultEnabled = true;
 
     // Arbitrary non-zero section id for `UserPatcher::BinaryModPatch`; Lilu's ABI treats zero as disabled.
     constexpr UInt32 kLiluPatchSection = 1;
@@ -228,6 +228,7 @@ namespace
     #include "UserPatchesVentura.inc"
     #include "UserPatchesSonoma.inc"
     #include "UserPatchesSequoia.inc"
+    #include "VDASignatures.inc"
     #include "UserPatchesTahoe.inc"
     #include "UserPatchesGLBudget.inc"
     #include "UserPatchesVAEncode.inc"
@@ -496,7 +497,7 @@ void UserPatches::init()
 
     this->enabled = kGLFixDefaultEnabled;
     if (checkKernelArgument(kBootArgGLFix)) { this->enabled = true; }
-    if (checkKernelArgument(kBootArgGLFixOff)) { this->enabled = false; }
+    if (checkKernelArgument(kBootArgNoGLFix) || checkKernelArgument(kBootArgGLFixOff)) { this->enabled = false; }
 
     // The resolver is a GL-only fallback: it must never be active when the GL fix itself is off.
     this->resolverEnabled = this->enabled
@@ -514,9 +515,8 @@ void UserPatches::init()
     this->semanticMTLEnabled = this->semanticEnabled && !checkKernelArgument(kBootArgNoLegacyBlend)
                                && checkKernelArgument(kBootArgGLFixSemanticMTL);
 
-    this->vdaEnabled = checkKernelArgument(kBootArgVDA)
-                       || checkKernelArgument(kBootArgAVC)
-                       || checkKernelArgument(kBootArgAVCEncode);
+    this->vdaEnabled = VideoPolicy::resolve(checkKernelArgument).requested;
+    this->vdaResolverEnabled = this->vdaEnabled && checkKernelArgument("-NRedVDAResolve");
 
     this->submitGuardEnabled = !checkKernelArgument(kBootArgNoSubmitGuard);
     this->legacyBlendEnabled = !checkKernelArgument(kBootArgNoLegacyBlend);
@@ -670,6 +670,7 @@ void UserPatches::registerVDAFix(const PagePatch* const patchTable, const size_t
 
 void UserPatches::processPatcher(KernelPatcher& patcher)
 {
+    NRed::singleton().setProp32("NRedVDAResolverRequested", this->vdaResolverEnabled ? 1 : 0);
     if (this->submitGuardEnabled || this->legacyBlendEnabled) {
         this->installSubmitGuard(patcher);
     }
@@ -739,11 +740,6 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
         if (vdaAllowed) {
             for (size_t i = 0; i < this->vdaTableCount; ++i) {
                 append(this->vdaTables[i].table, this->vdaTables[i].count, true);
-            }
-            // Only this exact Sequoia function/page has been verified. Keep the
-            // existing VDA/device/bridge gates and refuse nearby-page fallback.
-            if (currentKernelVersion().major() == 24) {
-                append(kVAEncodePitchPatches_Sequoia, arrsize(kVAEncodePitchPatches_Sequoia), true);
             }
         }
 
@@ -971,6 +967,42 @@ auto UserPatches::isPatchedPage(const NativePage& page, const UInt8* const data)
     }
 
     return true;
+}
+
+void UserPatches::patchVDASignaturePage(const void* data, UInt64 pageOffset, void* vnode, bool cachePage)
+{
+    if (!this->vdaEnabled || !this->vdaResolverEnabled || cachePage || !data || !vnode
+        || !VCNBridge::singleton().loadReady() || isFairPlayClient(current_task())) { return; }
+    // Exact standalone pathname only: no NotificationCenter, dyld, AppleGVA,
+    // similarly named apps or substring-based vnode matches.
+    char path[PATH_MAX]{};
+    int length = sizeof(path);
+    if (vn_getpath(reinterpret_cast<vnode_t>(vnode), path, &length) != 0
+        || strcmp(path, "/System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/MacOS/AMDRadeonVADriver2") != 0) { return; }
+    const auto major = currentKernelVersion().major();
+    if (major < 22 || major > 25) { return; }
+    const auto* signatures = major == 22 ? kVDAResolverSignatures_Ventura : kVDAResolverSignatures_Modern;
+    const auto count = major == 22 ? kVDAResolverSignatureCount_Ventura : kVDAResolverSignatureCount_Modern;
+    auto* bytes = static_cast<const UInt8*>(data);
+    VDASignaturePlanner::Plan plan{};
+    if (!VDASignaturePlanner::build(bytes, signatures, count, pageOffset, plan)) { return; }
+    if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) != KERN_SUCCESS) { return; }
+    // Validate the complete plan again while holding the write lock.
+    VDASignaturePlanner::Plan locked{};
+    bool changed = VDASignaturePlanner::build(bytes, signatures, count, pageOffset, locked);
+    if (changed) {
+        for (size_t i = 0; i < locked.count; ++i) {
+            const auto& site = locked.sites[i];
+            memcpy(const_cast<UInt8*>(bytes) + site.offset, site.replace, site.size);
+        }
+    }
+    const bool restored = MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock) == KERN_SUCCESS;
+    PANIC_COND(!restored, "UserPatch", "VDA resolver could not restore write protection");
+    if (changed) {
+        NRed::singleton().setProp32("NRedVDAResolverApplied", 1);
+        const auto applied = static_cast<UInt32>(OSIncrementAtomic(&this->vdaAppliedCount) + 1);
+        NRed::singleton().setProp32("NRedVCNUserApplied", applied);
+    }
 }
 
 void UserPatches::patchSignaturePage(const void* const data, const UInt64 pageOffset, void* const vnode)
@@ -1330,6 +1362,10 @@ __attribute__((noinline)) void UserPatches::patchNativePage(const void* const da
     for (size_t pageIndex = 0; pageIndex < this->nativePageCount; pageIndex++) {
         if (this->isPatchedPage(this->nativePages[pageIndex], static_cast<const UInt8*>(data))) { return; }
     }
+
+    // The VDA resolver is a separate, explicit QA path. It never scans the
+    // shared cache or runs under the GL resolver's policy.
+    if (this->vdaResolverEnabled) { this->patchVDASignaturePage(data, pageOffset, vnode, cachePage); }
 
     // No site-only fallback. Unknown pages remain stock; modern GL has its own
     // whole-function/page-local planner and Metal uses verified paired semantics.

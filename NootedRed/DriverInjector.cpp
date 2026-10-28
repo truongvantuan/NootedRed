@@ -52,6 +52,23 @@ static const char com_apple_driver_AppleGFXHDA[] = {
 };
 
 namespace {
+    void stripVideoCapabilities(OSDictionary* p)
+    {
+        if (!p) { return; }
+        const char* const keys[] = {"IOGVACodec", "IOGVAHEVCDecode", "IOGVAHEVCDecodeCapabilities",
+            "IOGVAHEVCEncode", "IOGVAHEVCEncodeCapabilities", "IOGVAH264EncodeCapabilities"};
+        for (const char* key : keys) { p->removeObject(key); }
+    }
+    void stripHEVCCapabilities(OSDictionary* p, bool encodeAllowed)
+    {
+        if (!p) { return; }
+        p->removeObject("IOGVAHEVCDecode");
+        p->removeObject("IOGVAHEVCDecodeCapabilities");
+        if (!encodeAllowed) {
+            p->removeObject("IOGVAHEVCEncode");
+            p->removeObject("IOGVAHEVCEncodeCapabilities");
+        }
+    }
     // Change only Main10 decode's advertised level. Keep Main/AVC and encode intact.
     bool capHEVCMain10(OSDictionary* personality)
     {
@@ -114,18 +131,18 @@ bool DriverInjector::wrapAddDrivers(void* const self, OSArray* const array, cons
 
             if (strcmp(driver.identifier, "com.apple.kext.AMDRadeonX5000") == 0) {
                 const auto count = driver.personalities->getCount();
-                if (VDA::singleton().isAVCOnly()) {
+                if (!VDA::singleton().isRequested()) {
                     for (UInt32 i = 0; i < count; ++i) {
-                        auto* const pDict = OSDynamicCast(OSDictionary, driver.personalities->getObject(i));
-                        if (pDict != nullptr) {
-                            pDict->removeObject("IOGVAHEVCDecode");
-                            pDict->removeObject("IOGVAHEVCDecodeCapabilities");
-                            if (!VDA::singleton().isHEVCEncodeAllowed()) {
-                                pDict->removeObject("IOGVAHEVCEncode");
-                                pDict->removeObject("IOGVAHEVCEncodeCapabilities");
-                            }
-                        }
+                        stripVideoCapabilities(OSDynamicCast(OSDictionary, driver.personalities->getObject(i)));
                     }
+                    stripVideoCapabilities(dict);
+                }
+                else if (VDA::singleton().isAVCOnly()) {
+                    for (UInt32 i = 0; i < count; ++i) {
+                        stripHEVCCapabilities(OSDynamicCast(OSDictionary, driver.personalities->getObject(i)),
+                                              VDA::singleton().isHEVCEncodeAllowed());
+                    }
+                    stripHEVCCapabilities(dict, VDA::singleton().isHEVCEncodeAllowed());
                     if (VDA::singleton().isHEVCEncodeAllowed()) {
                         DBGLOG("DriverInjector", "-NRedAVCEncode active: stripped HEVC decode, preserved HEVC encode for %s", driver.identifier);
                     } else {
@@ -140,6 +157,7 @@ bool DriverInjector::wrapAddDrivers(void* const self, OSArray* const array, cons
                         }
                     }
                     if (capHEVCMain10(dict)) { ++capped; }
+                    (void)capped;
                     DBGLOG("DriverInjector", "Main10 decode level capped in %u dictionaries (-NRedHEVC10 overrides)", capped);
                 }
             }
