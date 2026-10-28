@@ -56,6 +56,8 @@ jobs:
           python3 tools/test_opengl_owner.py
           python3 tools/test_gl_validation.py
           python3 tools/test_user_cache_patches.py
+          python3 tools/test_user_map_gate.py
+          python3 tools/test_user_map_gate.py --sanitize thread
           python3 tools/test_feature_verification.py
           python3 tools/test_gpu_vm_trace.py
           python3 tools/test_gpu_allocation_trace.py

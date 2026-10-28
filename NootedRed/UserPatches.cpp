@@ -33,6 +33,9 @@
 #include <TahoePatchData.hpp>
 #include <UserSubmitGuard.hpp>
 #include <UserCodePatch.hpp>
+#include <UserPatchMapGate.hpp>
+#include <IOKit/IOLocks.h>
+#include <kern/thread.h>
 #include <UserSharedCacheData.hpp>
 #include <UserOpenGL.hpp>
 #include <VCNBridge.hpp>
@@ -96,6 +99,8 @@ namespace
     RegionRecurse queryRegionFunc{nullptr};
     CopyIn        copyInFunc{nullptr};
     CopyOut       copyOutFunc{nullptr};
+    IOLock* cachePatchLock{nullptr};
+    UserPatchMapGate::Registry<64> cachePatchMaps;
 
     bool leafProtection(vm_map_t map, const mach_vm_address_t page, vm_prot_t& protection,
                         vm_prot_t* maximum = nullptr)
@@ -1430,7 +1435,13 @@ __attribute__((noinline)) int UserPatches::wrapSharedRegionCheck(proc_t process,
     auto& patches = singleton();
     const auto result = FunctionCast(wrapSharedRegionCheck, patches.orgSharedRegionCheck)(process, args, returnValue);
     if (result == 0 && (patches.submitGuardEnabled || patches.legacyBlendEnabled) && args != nullptr) {
-        patches.applySubmitGuard(process, args);
+        const auto map = getTaskMapFunc ? getTaskMapFunc(current_task()) : nullptr;
+        UserPatchMapGate::Lease<64> lease(cachePatchMaps, cachePatchLock, map, current_thread());
+        if (lease) {
+            patches.applySubmitGuard(process, args);
+        } else {
+            NRed::singleton().setProp32("NRedUserMapGateRejected", 1);
+        }
     }
     return result;
 }
@@ -1635,6 +1646,13 @@ bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
         return false;
     }
 
+    // Allocate once, before publishing the hook. Keep this lock alive for the boot,
+    // including a routing failure: no request can observe a freed gate.
+    if (cachePatchLock == nullptr) { cachePatchLock = IOLockAlloc(); }
+    if (cachePatchLock == nullptr) {
+        SYSLOG("UserPatch", "Cannot allocate shared-cache transaction gate");
+        return false;
+    }
     KernelPatcher::RouteRequest request{"_shared_region_check_np", wrapSharedRegionCheck, this->orgSharedRegionCheck};
     if (!patcher.routeMultipleLong(KernelPatcher::KernelID, &request, 1)) {
         patcher.clearError();
@@ -1642,6 +1660,7 @@ bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
         return false;
     }
 
+    NRed::singleton().setProp32("NRedUserMapGateRevision", 1);
     NRed::singleton().setProp32("NRedSubmitGuardSupported", UserSubmitGuardData::getMethodOffset(kernelMajor) != 0 ? 1 : 0);
     NRed::singleton().setProp32("NRedSubmitGuardEnabled", this->submitGuardEnabled && UserSubmitGuardData::getMethodOffset(kernelMajor) != 0 ? 1 : 0);
     NRed::singleton().setProp32("NRedSubmitGuardVersion", 2);

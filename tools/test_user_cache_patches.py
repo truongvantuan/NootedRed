@@ -19,6 +19,8 @@ SHIM = r'''
 #include <vector>
 #include <string>
 #include <cstdio>
+#include <mutex>
+#include <condition_variable>
 #include <UserCodePatch.hpp>
 #include <UserSharedCacheData.hpp>
 #include <UserSubmitGuard.hpp>
@@ -38,6 +40,16 @@ struct NRed {
     void setProp32(const char* name, unsigned value) { props[name]=value; }
 };
 int current_task() { return 1; }
+void* current_thread() { static int thread; return &thread; }
+using IOLock=std::mutex;
+constexpr int THREAD_UNINT=0;
+void IOLockLock(IOLock* lock){lock->lock();}
+void IOLockUnlock(IOLock* lock){lock->unlock();}
+void IOLockSleep(IOLock*,void*,int){assert(false);}
+void IOLockWakeup(IOLock*,void*,bool){}
+#include <UserPatchMapGate.hpp>
+IOLock testCacheLock;IOLock* cachePatchLock=&testCacheLock;
+UserPatchMapGate::Registry<64> cachePatchMaps;
 proc_t current_proc() { return reinterpret_cast<void*>(1); }
 int proc_pid(proc_t) { return 1; }
 void proc_name(int, char* name, int size) { std::snprintf(name,size,"WindowServer"); }
@@ -280,6 +292,8 @@ def main():
 #include <mach/mach_vm.h>
 #include <cassert>
 #include <cstdio>
+#include <mutex>
+#include <condition_variable>
 int main() {
  mach_vm_address_t page=0;
  auto task=mach_task_self();
