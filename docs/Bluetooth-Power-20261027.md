@@ -81,3 +81,55 @@ Bluetooth works normally without resetting/re-pairing, and confirmed this
 was Restart. This verifies the restart failure is resolved in this test and
 supports the board-ID/transport-selection diagnosis. Actual shutdown/power-on
 reliability remains unverified. Evidence: boot-20261027-234853/.
+
+## AC-connected shutdown failure — 28 October
+
+Boot BD604B43-D704-4CDF-8727-4112E6D9F0F7 started at 07:49:26 after overnight
+shutdown with AC connected. The board-ID argument is active and transport is
+now USB, but the controller is off/address NULL/firmware v0 c0. bluetoothd
+repeatedly reports that it cannot find a USB Bluetooth controller after 15
+seconds, failing USB transport initialization. The DW1560 itself still
+enumerates as 0a5c:216f. Thus yesterday's board-ID change fixed the UART
+selection/restart case but did not establish shutdown endurance.
+
+With user approval, temporarily stopped the Logitech G HUB updater, tray and
+agent, releasing its USB client, then restarted bluetoothd. Ten observations
+over approximately 50 seconds still showed no usable controller. Restored all
+three helpers; their new processes were confirmed running. This does not
+justify permanently disabling G HUB or prove it can never contribute to a
+boot race. No pairing, firmware-delay, USB-map or additional EFI change was
+made during the test. Evidence: ghub-test-20261028-082535/.
+
+The user adds two important controls: the symptom also occurs on Linux despite
+Wi-Fi detection, and removing AC power restores Bluetooth. BIOS Fast Boot is
+confirmed Disabled; S5 Maximum Power Savings is Enabled. Saved SysReport
+identifies S27 02.23.00, released 2026-07-24 (snapshot, not live firmware
+attestation). HP's commercial BIOS guide describes S5 Maximum Power Savings
+as minimizing off-state consumption, not guaranteeing equivalence to AC
+removal. ACPI distinguishes S5 soft-off from G3 mechanical-off. Retained
+power/card firmware state or incomplete power/reset sequencing is therefore
+a stronger hypothesis, not proof of a specific HP BIOS defect. Linux lsusb,
+btusb/btbcm logs, rfkill and exact distro/kernel evidence are still required
+to distinguish a missing USB function from firmware/HCI initialization failure.
+A read-only portable collector is prepared as collect-linux.sh.
+
+NootedRed 1.2.0 was installed at 08:17 but the running kext throughout these
+failures/tests was still 1.1.1 UUID 382D20A6-DBBB-3E0E-8282-CDCE0420B1BF.
+The newly merged kext cannot explain this pre-install captured failure.
+The official same-version BrcmPatchRAM3 DEBUG 2.7.2 is downloaded/hash-verified
+and prepared separately, not installed. Its FirmwareLoaded property is not a
+success proof: uploader source sets it before the attempted upload.
+
+Next controlled sequence: boot/verify the new NootedRed with BIOS unchanged
+(use the known AC-disconnect recovery if needed), then test only S5 Maximum
+Power Savings Disabled, keeping Fast Boot Disabled and EFI fixed. Start from
+a known healthy controller state, then test normal shutdown/power-on with AC
+connected. This tests whether avoiding the current S5 power-gating behavior
+changes the failure; it is not a promised repair. Record the result and revert
+the test setting if it offers no benefit. No BIOS flash or reset is performed.
+
+Sources added:
+- https://ftp.hp.com/pub/caps-softpaq/cmit/whitepapers/HPBIOSSetup.pdf
+- https://uefi.org/specs/ACPI/6.5/02_Definition_of_Terms.html
+- https://github.com/torvalds/linux/blob/v6.12/drivers/bluetooth/btusb.c
+- https://github.com/acidanthera/BrcmPatchRAM/blob/2.7.2/BrcmPatchRAM/BrcmPatchRAM3.cpp
