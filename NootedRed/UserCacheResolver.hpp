@@ -360,7 +360,8 @@ namespace UserCacheResolver
                         const Function (&functions)[FunctionCount], const Patch* patches,
                         const Location (&locations)[PatchCount], Patch* output, UInt8* originals, UInt8* replacements,
                         UInt32 stride, ImageBounds (&images)[ImageCount], bool sectionRelative = false,
-                        const UserCacheSectionData::Target* scopedTargets = nullptr, UInt32 scopedTargetCount = 0)
+                        const UserCacheSectionData::Target* scopedTargets = nullptr, UInt32 scopedTargetCount = 0,
+                        const UInt8* exactCacheUUID = nullptr)
     {
         static_assert(ImageCount > 0 && ImageCount <= 16 && FunctionCount > 0 && FunctionCount <= 32);
         if (scopedTargetCount > 128 || (scopedTargets == nullptr) != (scopedTargetCount == 0)) { return false; }
@@ -376,6 +377,11 @@ namespace UserCacheResolver
             images[i].text         = image.text;
             images[i].segmentCount = image.segmentCount;
             memcpy(images[i].segments, image.segments, image.segmentCount * sizeof(Range));
+        }
+        if (exactCacheUUID) {
+            UInt8 header[104];
+            if (!input.read(base,header,sizeof(header)) || memcmp(header,"dyld_v1 x86_64h",16)
+                || memcmp(header+88,exactCacheUUID,16)) { return false; }
         }
         for (UInt32 i = 0; i < FunctionCount; ++i) {
             if (functions[i].image >= ImageCount) { return false; }
@@ -408,10 +414,24 @@ namespace UserCacheResolver
                 }
                 return true;
             };
-            if (!find(input, images[functions[i].image].text, functions[i], i, patches, locations, PatchCount,
-                      addresses[i], variants[i], dataTargetsMatch))
-            {
-                return false;
+            if (exactCacheUUID) {
+                // An exact cache identity permits a fixed location, never partial
+                // function or target validation. Unknown caches keep the scanner.
+                const auto& image=images[functions[i].image];const auto& fn=functions[i];
+                if (fn.size<32 || image.text.size>MaxTextSize || fn.rva>=UserLimit-image.address) { return false; }
+                addresses[i]=image.address+fn.rva;
+                if (!image.text.contains(addresses[i],fn.size)) { return false; }
+                bool found=false;
+                for (UInt32 variant=0;variant<2;++variant) {
+                    if (matches(input,addresses[i],fn,i,variant!=0,patches,locations,PatchCount)
+                        && dataTargetsMatch(addresses[i],variant!=0)) {
+                        variants[i]=variant!=0;found=true;break;
+                    }
+                }
+                if (!found) { return false; }
+            } else {
+                if (!find(input, images[functions[i].image].text, functions[i], i, patches, locations, PatchCount,
+                          addresses[i], variants[i], dataTargetsMatch)) { return false; }
             }
             for (UInt32 j = 0; j < i; ++j) {
                 if (Range{addresses[j], functions[j].size}.contains(addresses[i], 1)
@@ -493,6 +513,19 @@ namespace UserCacheResolver
         ImageBounds images[ImageCount]{};
         return resolveWithImages(input, base, imageRefs, functions, patches, locations, output, originals, replacements,
                                  stride, images, sectionRelative, scopedTargets, scopedTargetCount);
+    }
+
+    // Complete generated profile at pinned RVAs. No scan or fallback on a UUID
+    // mismatch; callers may separately select a relocation-aware profile.
+    template<typename Patch, size_t ImageCount, size_t FunctionCount, size_t PatchCount>
+    inline bool resolveExact(Input& input, UInt64 base, const UInt8 (&uuid)[16],
+                             const ImageReference (&imageRefs)[ImageCount], const Function (&functions)[FunctionCount],
+                             const Patch* patches, const Location (&locations)[PatchCount], Patch* output,
+                             UInt8* originals, UInt8* replacements, UInt32 stride)
+    {
+        ImageBounds images[ImageCount]{};
+        return resolveWithImages(input,base,imageRefs,functions,patches,locations,output,originals,replacements,
+                                 stride,images,false,nullptr,0,uuid);
     }
 
 }    // namespace UserCacheResolver

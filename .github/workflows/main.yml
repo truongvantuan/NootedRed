@@ -74,6 +74,9 @@ jobs:
           python3 tools/test_media_exact_plan.py
           python3 tools/test_media_transaction.py
           python3 tools/test_media_safety_adapter.py
+          python3 tools/test_surface_profile.py
+          python3 tools/test_surface_init.py
+          python3 tools/test_exact_cache_resolver.py
           python3 tools/test_video_capabilities.py
           python3 tools/test_vcn_gfxoff.py
           python3 tools/test_user_patch_installation.py
