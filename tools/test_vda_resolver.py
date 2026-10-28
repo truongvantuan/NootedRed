@@ -55,6 +55,25 @@ int main(){
  broken=s;broken.contextSize=4097;assert(!build(page,&broken,1,0,p));
  broken=s;broken.pageOffset=4096;assert(!build(page,&broken,1,0,p));
  assert(!build(nullptr,&s,1,0,p));assert(!build(page,&s,17,0,p));
+ // Multi-site signatures must patch every valid occurrence, including a later fresh page.
+ reset();const auto& multi=kVDAResolverSignatures_Modern[5];memset(page,0xCC,sizeof(page));
+ for(size_t i=0;i<multi.count;++i)memcpy(page+100+i*128,multi.context,multi.contextSize);
+ assert(build(page,&multi,1,0,p)&&p.count==multi.count);
+ UserPatches multisite;multisite.patchVDASignaturePage(page,0,const_cast<char*>(correctPath),false);
+ for(size_t i=0;i<multi.count;++i)assert(!memcmp(page+100+i*128+multi.patchOffset,multi.replace,multi.replaceSize));
+ reset();multisite.patchVDASignaturePage(page,4096,const_cast<char*>(correctPath),false);assert(multisite.vdaAppliedCount==2);
+ // AppleGVA uses the same bounded planner, exact original branch and path gates.
+ const UserPatches::SignaturePatch* gva[]={&kGVAResolverSignature_Ventura,&kGVAResolverSignature_Sonoma,&kGVAResolverSignature_Sequoia,&kGVAResolverSignature_Tahoe};
+ const char* gvaPath="/System/Library/PrivateFrameworks/AppleGVA.framework/Versions/A/AppleGVA";
+ for(unsigned v=0;v<4;++v){
+  const auto& sig=*gva[v];reset();major=22+v;memset(page,0xCC,sizeof(page));memcpy(page+128,sig.context,sig.contextSize);memcpy(original,page,sizeof(page));
+  UserPatches g;g.patchVDASignaturePage(page,0,const_cast<char*>(gvaPath),true);assert(!memcmp(page,original,sizeof(page)));
+  g.patchVDASignaturePage(page,0,const_cast<char*>(correctPath),false);assert(!memcmp(page,original,sizeof(page)));
+  g.patchVDASignaturePage(page,0,const_cast<char*>(gvaPath),false);assert(g.vdaAppliedCount==1&&!memcmp(page+128+sig.patchOffset,sig.replace,sig.replaceSize));
+  for(size_t i=0;i<sizeof(page);++i)if(i<128+sig.patchOffset||i>=128+sig.patchOffset+sig.replaceSize)assert(page[i]==original[i]);
+  memcpy(page,original,sizeof(page));page[128+sig.patchOffset+2]^=1;
+  UserPatches wrong;wrong.patchVDASignaturePage(page,0,const_cast<char*>(gvaPath),false);assert(!wrong.vdaAppliedCount);
+ }
  // More occurrences than declared are ambiguous: no partial plan survives.
  reset();memcpy(page+200,s.context,s.contextSize);assert(!build(page,&s,1,0,p)&&p.count==0);
  // Even individually valid signatures must not overlap.

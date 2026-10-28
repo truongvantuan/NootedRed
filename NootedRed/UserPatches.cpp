@@ -973,16 +973,24 @@ void UserPatches::patchVDASignaturePage(const void* data, UInt64 pageOffset, voi
 {
     if (!this->vdaEnabled || !this->vdaResolverEnabled || cachePage || !data || !vnode
         || !VCNBridge::singleton().loadReady() || isFairPlayClient(current_task())) { return; }
-    // Exact standalone pathname only: no NotificationCenter, dyld, AppleGVA,
-    // similarly named apps or substring-based vnode matches.
+    // Exact standalone image paths only. Shared caches retain verified page tables;
+    // no substring matches, application pages or global per-boot suppression.
     char path[PATH_MAX]{};
     int length = sizeof(path);
-    if (vn_getpath(reinterpret_cast<vnode_t>(vnode), path, &length) != 0
-        || strcmp(path, "/System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/MacOS/AMDRadeonVADriver2") != 0) { return; }
+    if (vn_getpath(reinterpret_cast<vnode_t>(vnode), path, &length) != 0) { return; }
+    const bool isVA = strcmp(path, "/System/Library/Extensions/AMDRadeonVADriver2.bundle/Contents/MacOS/AMDRadeonVADriver2") == 0;
+    const bool isGVA = strcmp(path, "/System/Library/PrivateFrameworks/AppleGVA.framework/Versions/A/AppleGVA") == 0;
+    if (!isVA && !isGVA) { return; }
     const auto major = currentKernelVersion().major();
     if (major < 22 || major > 25) { return; }
-    const auto* signatures = major == 22 ? kVDAResolverSignatures_Ventura : kVDAResolverSignatures_Modern;
-    const auto count = major == 22 ? kVDAResolverSignatureCount_Ventura : kVDAResolverSignatureCount_Modern;
+    const UserPatches::SignaturePatch* signatures = major == 22 ? kVDAResolverSignatures_Ventura : kVDAResolverSignatures_Modern;
+    auto count = major == 22 ? kVDAResolverSignatureCount_Ventura : kVDAResolverSignatureCount_Modern;
+    if (isGVA) {
+        signatures = major == 22 ? &kGVAResolverSignature_Ventura
+                     : major == 23 ? &kGVAResolverSignature_Sonoma
+                     : major == 24 ? &kGVAResolverSignature_Sequoia : &kGVAResolverSignature_Tahoe;
+        count = 1;
+    }
     auto* bytes = static_cast<const UInt8*>(data);
     VDASignaturePlanner::Plan plan{};
     if (!VDASignaturePlanner::build(bytes, signatures, count, pageOffset, plan)) { return; }

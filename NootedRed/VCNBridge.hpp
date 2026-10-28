@@ -53,13 +53,10 @@ class VCNBridge
     bool engineAllocated{false};
     bool noGfxOff{false};
     bool gfxOffHeld{false};
-    bool noDrain{false};
     bool traceContexts{false};
     mach_vm_address_t orgVideoNewContext{0};
     mach_vm_address_t orgVideoRemoveContext{0};
     void* vcnEngine{nullptr};
-    mach_vm_address_t vcnIsIdle{0};
-    UInt32 drainCount{0}, drainTimeouts{0}, lastWaitMs{0}, maxWaitMs{0};
 
     mach_vm_address_t orgAcceleratorStart{0};
     mach_vm_address_t orgAcceleratorStop{0};
@@ -128,7 +125,6 @@ private:
     static bool          initHardware(void* self, UInt32 channel);
     static void          noopEnableGfxOff(void* self);
     void                 holdGfxOff();
-    void                 drainVCN(const char* reason);
     void                 installContextTrace(KernelPatcher& patcher, size_t id, mach_vm_address_t slide, size_t size);
     static UInt32        videoNewContext(void* self, void* input, void* output, UInt64 size, UInt64* outputSize);
     static UInt32        videoRemoveContext(void* self, void* input);
