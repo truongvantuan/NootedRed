@@ -17,20 +17,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STUDY = ROOT/'build/hevc-root-cause-20261026'
 EXPECTED_UUID = '3119DE95-4690-35E6-86A8-869A8ADFC3B7'
-GPU_PREDICATE = 'process == "kernel" AND (eventMessage CONTAINS[c] "GPURestartBegin" OR eventMessage CONTAINS[c] "GPU Hang" OR eventMessage CONTAINS[c] "channel timeout")'
+GPU_PREDICATE = ('process == "kernel" AND (eventMessage CONTAINS[c] "GPURestartBegin" '
+                 'OR eventMessage CONTAINS[c] "GPU Hang" OR eventMessage CONTAINS[c] "channel timeout" '
+                 'OR (senderImagePath CONTAINS[c] "AMDRadeon" '
+                 'AND (eventMessage CONTAINS[c] "event timeout" OR eventMessage CONTAINS[c] "is hung!")))')
 
 
 def command(args, timeout=30):
     return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
 
 
-def gpu_events():
+def gpu_events(timeout=120):
     boot = command(['sysctl','-n','kern.boottime']).stdout.decode()
     match = re.search(r'sec = (\d+)', boot)
     if not match:
         raise RuntimeError('cannot establish current boot time')
     start = dt.datetime.fromtimestamp(int(match[1])).strftime('%Y-%m-%d %H:%M:%S')
-    result = command(['/usr/bin/log','show','--start',start,'--style','ndjson','--predicate',GPU_PREDICATE])
+    result = command(['/usr/bin/log','show','--start',start,'--style','ndjson','--predicate',GPU_PREDICATE], timeout=timeout)
     if result.returncode:
         raise RuntimeError('GPU log query failed')
     uuid = command(['sysctl','-n','kern.bootsessionuuid']).stdout.decode().strip().upper()

@@ -67,9 +67,13 @@ jobs:
           python3 tools/test_vcn_gfxoff.py
           python3 tools/test_user_patch_installation.py
           python3 tools/test_vcn_drain.py
+          python3 tools/test_vcn_context_trace.py
+          python3 tools/test_vcn_trace_capture.py
+          python3 tools/test_virtualsmc_startup_readiness.py
           python3 tools/test_hevc_main10_policy.py
           python3 tools/test_heif_inspection.py
           python3 tools/test_heif_export.py
+          python3 tools/test_zalo_hevc_guard.py
           python3 tools/test_vcn_encode_pitch.py
           python3 tools/test_dp_recovery.py
           python3 tools/test_atom_loop_guard.py

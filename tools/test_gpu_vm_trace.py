@@ -126,7 +126,7 @@ int main() {
  }
  p=makePatcher();install(p);assert(p.routes==5 && NRed::singleton().props["NRedVMTraceEnabled"]==1);
  assert(NRed::singleton().props["NRedVMTraceRoutes"]==GPUVMTraceData::RequiredRoutes);
- assert(NRed::singleton().props["NRedVMTraceVersion"]==2);
+ assert(NRed::singleton().props["NRedVMTraceVersion"]==3);
  for(int failed=0;failed<5;failed++) {
   p=makePatcher();p.failRoute=failed;install(p);
   assert(p.routes==failed+1 && NRed::singleton().props["NRedVMTraceRoutes"]==((1U<<failed)-1));
@@ -159,6 +159,14 @@ int main() {
   assert(messages.back().find("tid=987654321")!=std::string::npos);
  }
  assert(ranges==2);
+ expectedAddress=0x400100000ULL;expectedSize=4096;
+ assert(GPUVMTraceData::interestingAddress(expectedAddress));
+ for(const char* decoder:{"VTDecoderXPCService","VTDecoderXPCServ"}) {
+  processName=decoder;int old=logs;
+  assert(X5000::traceMapGPUVirtualRange(object,expectedAddress,expectedMemory,expectedOffset,expectedSize,expectedFlags)==nativeResult);
+  assert(logs==old+2 && std::memcmp(original,object,sizeof(object))==0);
+ }
+ processName="gl_blend_probe";
  expectedLevel=3;expectedFragment=4;expectedAddress=0x123456789000ULL;
  for(UInt64 encoded:{UInt64{0},~UInt64{0},UInt64{0x0600123456789067ULL},UInt64{1}<<63}) {
   expectedPTE=encoded;int old=logs;
@@ -167,10 +175,13 @@ int main() {
  }
  assert(ptes==4);
  assert(GPUVMTraceData::interestingRange(0x3fffffff0ULL,32));
- assert(!GPUVMTraceData::interestingRange(0x400100000ULL,4096));
+ assert(GPUVMTraceData::interestingRange(0x400100000ULL,4096));
+ assert(GPUVMTraceData::interestingRange(0x400100fffULL,1));
+ assert(!GPUVMTraceData::interestingAddress(0x400101000ULL));
+ assert(!GPUVMTraceData::interestingRange(0x400101000ULL,4096));
  assert(!GPUVMTraceData::interestingRange(0x400000000ULL,0));
  assert(!GPUVMTraceData::interestingRange(~UInt64{0}-8,32));
- for(auto outside:{UInt64{0x1000},UInt64{0x400100000},~UInt64{0}-8}) {
+ for(auto outside:{UInt64{0x1000},UInt64{0x400101000},~UInt64{0}-8}) {
   expectedAddress=outside;expectedSize=32;int old=logs;
   assert(X5000::traceMapGPUVirtualRange(object,expectedAddress,expectedMemory,expectedOffset,expectedSize,expectedFlags)==nativeResult);
   assert(logs==old);
@@ -210,4 +221,4 @@ if DEFAULT_KC.exists():
             assert len(expected)==32 and k.read(k.symbols[name],32)==expected,name
         print('24H32 native method prefixes match the installed kernel collection')
 print('VM trace: opt-in/UUID/version/prefix/range guards; partial-route state; exact argument/result forwarding; read-only object access; process/address filter and log cap passed')
-print('VM trace v2: five guarded methods, native range arguments and full 64-bit PTE returns preserved')
+print('VM trace v3: native decoder names and Zalo fault page included; five guarded methods and full-width native results preserved')

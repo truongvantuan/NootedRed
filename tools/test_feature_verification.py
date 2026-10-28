@@ -45,6 +45,16 @@ snapshot={'cache_uuid_hex':'42ec2890bc40317ebb2745142bff7f26','metal_page_hex':p
           'submit_guard_entry_hex':(bytes.fromhex('ff2500000000')+struct.pack('<Q',target)+b'\x90').hex(),
           'submit_guard_payload_hex':payload.hex(),'submit_guard_payload_protection':5}
 assert all(validate_cache(snapshot,arrays,24).values())
+# A 24H232 UUID alone is insufficient: require its full reference-page variant
+# and retain independent entry/payload checks.
+new_snapshot=deepcopy(snapshot)
+new_snapshot['cache_uuid_hex']='90db0deb23443601b011b87312d74cfb'
+assert not all(validate_cache(new_snapshot,arrays,24).values())
+new_page=bytearray(page);new_page[0x92c]=0xc8
+new_snapshot['metal_page_hex']=new_page.hex()
+assert all(validate_cache(new_snapshot,arrays,24).values())
+bad_new=deepcopy(new_snapshot);bad_new['metal_page_hex']='00'+new_page.hex()[2:]
+assert not all(validate_cache(bad_new,arrays,24).values())
 for key,bad in [('cache_uuid_hex','00'*16),('metal_page_hex',('00'+page.hex()[2:])),
                 ('submit_guard_entry_hex','ff2500000000'+'00'*9),
                 ('submit_guard_payload_hex','00'+payload.hex()[2:]),

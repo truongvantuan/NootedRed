@@ -10,7 +10,7 @@ namespace GPUVMTraceData
     inline constexpr size_t GPUAddressOffset = 0x98;
     inline constexpr size_t OptionsOffset = 0x138;
     inline constexpr UInt32 MaximumEvents = 1024;
-    inline constexpr UInt32 Version = 2;
+    inline constexpr UInt32 Version = 3;
     inline constexpr UInt32 RequiredRoutes = 31;
     inline constexpr UInt32 MaximumPTEEvents = 256;
 
@@ -40,13 +40,15 @@ namespace GPUVMTraceData
 
     inline bool interestingAddress(const UInt64 address)
     {
-        // Includes the earlier Zen 4 KiB blit resource and nearby initial allocations.
-        return address >= 0x400000000ULL && address < 0x400100000ULL;
+        // Preserve the Zen allocation window and include the adjacent 4 KiB
+        // page named by the Zalo VCN incident: 0x400100000 was the old upper
+        // bound and was therefore excluded from the earlier GL-only trace.
+        return address >= 0x400000000ULL && address < 0x400101000ULL;
     }
 
     inline bool interestingRange(const UInt64 address, const UInt64 size)
     {
         if (size == 0 || size > ~UInt64{0} - address) { return false; }
-        return address < 0x400100000ULL && address + size > 0x400000000ULL;
+        return address < 0x400101000ULL && address + size > 0x400000000ULL;
     }
 }

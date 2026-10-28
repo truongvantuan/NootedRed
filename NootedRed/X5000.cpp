@@ -482,7 +482,11 @@ namespace
         char name[32]{};
         if (pid > 0) { proc_name(pid, name, sizeof(name)); }
         name[sizeof(name) - 1] = '\0';
-        return strcmp(name, "gl_blend_probe") == 0 || strcmp(name, "Zen GPU Helper") == 0 ? pid : 0;
+        // proc_name can expose either the full executable name or the
+        // kernel's 16-character abbreviation. Trace both native VT forms.
+        return strcmp(name, "gl_blend_probe") == 0 || strcmp(name, "Zen GPU Helper") == 0
+                   || strcmp(name, "VTDecoderXPCService") == 0 || strcmp(name, "VTDecoderXPCServ") == 0
+                   ? pid : 0;
     }
 
     UInt32 traceVMOperation(const char* const operation, void* const self, const UInt64 address)

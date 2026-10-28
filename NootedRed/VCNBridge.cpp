@@ -27,6 +27,7 @@
 #include <Headers/kern_util.hpp>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/IOLib.h>
+#include <sys/proc.h>
 #include <Kexts.hpp>
 #include <NRed.hpp>
 #include <VCNBridge.hpp>
@@ -55,6 +56,16 @@ namespace
     const char* const kBootArgNoDrain = "-NRedVCNNoDrain";
     constexpr UInt32 kDrainTimeoutMs = 250;
     constexpr UInt32 kDrainStepMs = 5;
+
+    UInt32 contextTraceBegin(const char* const operation)
+    {
+        static volatile SInt32 events{0};
+        const auto event = static_cast<UInt32>(OSIncrementAtomic(&events) + 1);
+        // Bound diagnostic logging. Native calls continue after the bound.
+        if (event > 512) { return 0; }
+        SYSLOG("VCNTrace", "begin op=%s pid=%d event=%u", operation, proc_selfpid(), event);
+        return event;
+    }
 
     // Prefer exact-build data, with explicitly declared family variants as byte-verified fallbacks.
     bool isSupportedOS()
@@ -184,6 +195,7 @@ void VCNBridge::init()
     this->requested = checkKernelArgument(kBootArgVDA) || checkKernelArgument(kBootArgAVC) || checkKernelArgument(kBootArgAVCEncode);
     this->noGfxOff = this->requested && checkKernelArgument(kBootArgNoGfxOff);
     this->noDrain = this->requested && checkKernelArgument(kBootArgNoDrain);
+    this->traceContexts = this->requested && checkKernelArgument("-NRedVCNTrace");
     if (this->noGfxOff) {
         NRed::singleton().setProp32("NRedVCNNoGfxOff", 1);
         SYSLOG("VCN", "VCN GFXOFF hold requested; X5000 enableGfxOff will be ignored");
@@ -458,6 +470,74 @@ void VCNBridge::drainVCN(const char* const reason)
         NRed::singleton().setProp32("NRedVCNIdleTimeouts", bridge.drainTimeouts);
         SYSLOG("VCN", "VCN engine still busy after %u ms at %s; teardown continues", waited, reason);
     }
+}
+
+UInt32 VCNBridge::videoNewContext(void* const self, void* const input, void* const output,
+                                const UInt64 size, UInt64* const outputSize)
+{
+    auto& bridge = singleton();
+    const auto event = bridge.traceContexts ? contextTraceBegin("newContext") : 0;
+    const auto result = reinterpret_cast<UInt32 (*)(void*, void*, void*, UInt64, UInt64*)>(
+        bridge.orgVideoNewContext)(self, input, output, size, outputSize);
+    if (event != 0) {
+        SYSLOG("VCNTrace", "end op=newContext pid=%d result=0x%X event=%u", proc_selfpid(), result, event);
+    }
+    return result;
+}
+
+UInt32 VCNBridge::videoRemoveContext(void* const self, void* const input)
+{
+    auto& bridge = singleton();
+    const auto event = bridge.traceContexts ? contextTraceBegin("removeContext") : 0;
+    const auto result = reinterpret_cast<UInt32 (*)(void*, void*)>(bridge.orgVideoRemoveContext)(self, input);
+    if (event != 0) {
+        SYSLOG("VCNTrace", "end op=removeContext pid=%d result=0x%X event=%u", proc_selfpid(), result, event);
+    }
+    return result;
+}
+
+void VCNBridge::installContextTrace(KernelPatcher& patcher, const size_t id,
+                                    const mach_vm_address_t slide, const size_t size)
+{
+    if (!this->traceContexts) { return; }
+    NRed::singleton().setProp32("NRedVCNContextTraceRequested", 1);
+    const auto* const variant = currentVariant();
+    // The prototypes/prologues below were checked against this exact local KC,
+    // matching the UUIDs in the Zalo incident. No family fallback is allowed.
+    if (variant == nullptr || strcmp(variant->build, "24H32") != 0) { return; }
+    constexpr UInt8 newPrefix[] = {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56,
+                                  0x41, 0x55, 0x41, 0x54, 0x53, 0x50, 0x48, 0x85};
+    constexpr UInt8 removePrefix[] = {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56,
+                                     0x41, 0x54, 0x53, 0x41, 0xBE, 0xC2, 0x02, 0x00};
+    const char* const newSymbol = "__ZN36AMDRadeonX6000_AMDNavi10VideoContext10newContextEP23sVideoContextCreateInfoP23sVideoContextReturnInfoyPy";
+    const char* const removeSymbol = "__ZN36AMDRadeonX6000_AMDNavi10VideoContext13removeContextEP23sVideoContextRemoveInfo";
+    mach_vm_address_t newAddress{0}, removeAddress{0};
+    if (size < sizeof(newPrefix)
+        || !resolve(patcher, id, newSymbol, newAddress, slide, size)
+        || !resolve(patcher, id, removeSymbol, removeAddress, slide, size)
+        || newAddress < slide || newAddress - slide > size - sizeof(newPrefix)
+        || removeAddress < slide || removeAddress - slide > size - sizeof(removePrefix)
+        || memcmp(reinterpret_cast<void*>(newAddress), newPrefix, sizeof(newPrefix)) != 0
+        || memcmp(reinterpret_cast<void*>(removeAddress), removePrefix, sizeof(removePrefix)) != 0)
+    {
+        patcher.clearError();
+        SYSLOG("VCNTrace", "context trace not installed: exact-build entry bytes did not match");
+        return;
+    }
+    KernelPatcher::RouteRequest routes[] = {
+        {newSymbol, videoNewContext, this->orgVideoNewContext},
+        {removeSymbol, videoRemoveContext, this->orgVideoRemoveContext},
+    };
+    const bool installed = patcher.routeMultiple(id, routes, arrsize(routes), slide, size);
+    if (!installed) {
+        // A partial route still forwards to its own native trampoline, but
+        // emits nothing. Never publish readiness for incomplete coverage.
+        this->traceContexts = false;
+        patcher.clearError();
+    }
+    NRed::singleton().setProp32("NRedVCNContextTraceReady", installed ? 1 : 0);
+    NRed::singleton().setProp32("NRedVCNContextTraceVersion", 1);
+    SYSLOG("VCNTrace", "24H32 context trace ready=%u; native calls preserved", installed ? 1U : 0U);
 }
 
 void VCNBridge::signalWork(void* const hardware)
@@ -797,6 +877,7 @@ void VCNBridge::processKext(KernelPatcher& patcher, const size_t id, const mach_
 
         this->x6000Prepared = true;
         NRed::singleton().setProp32("NRedVCNX6000ABIValidated", 1);
+        this->installContextTrace(patcher, id, slide, size);
         SYSLOG("VCN", "X6000 VCN bridge prepared (%u call-site patches, build %s%s)", callPatchCount,
                variant->build, variant->hasKernelIdentity ? "" : ", imported data");
         DBGLOG("VCN", "VCN data source: %s", variant->sourceDescription);

@@ -263,3 +263,15 @@ missing dictionaries, allocation failure and failed writes. Neither submits GPU 
 `test_user_cache_patches.py`, `test_gl_page_guard.py` and `test_vcn_multibuild.py` additionally
 cover independent controls, Gate 0 collisions, and the separated Ventura fixtures.
 See [migration report](../docs/Weachy-v1.1.1-Migration-20261026.md) for exact accepted and deferred changes.
+# Zalo HEVC startup guard
+
+`zalo_hevc_guard.py` inspects Zalo/Electron 22.3.9 without launching it by default.
+`--launch` uses the app-local `PlatformHEVCDecoderSupport` feature disable and
+refuses to reuse an unguarded running instance. It changes no EFI setting or app
+bundle. `--run --yes` is a coordinated diagnostic launch requiring authenticated
+kernel-ring capture; it is not a guarantee against unrelated GPU failures.
+
+`test_zalo_hevc_guard.py` checks inspection-only behavior, app/runtime identity,
+feature matching and existing-instance safety without running Zalo or GPU work.
+See [the investigation](../docs/Zalo-Freeze-20261026.md) for evidence, measured
+results and the HEVC playback limitation.

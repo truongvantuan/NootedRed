@@ -367,8 +367,14 @@ namespace
             memcpy(target + allow, reference + allow, sizeof(kTahoeMTLAllowFind));
             size = allow + sizeof(kTahoeMTLAllowFind) - first;
         }
+        // 24H232's complete control-page reference differs from 24H32 only at
+        // +0x92C (D0 -> C8). Accept exactly those two full pages, retaining the
+        // observed byte in the output. This is not a wildcard or a new write site.
+        const bool sequoia24H232 = major == 24 && reference[0x92C] == 0xD0 && target[0x92C] == 0xC8;
+        if (sequoia24H232) { target[0x92C] = 0xD0; }
         // No short-opcode-only match: every byte outside our known sites must match the reference.
         if (memcmp(target, reference, PAGE_SIZE) != 0) { return false; }
+        if (sequoia24H232) { target[0x92C] = 0xC8; }
         memcpy(target + first, gate, 2);
         if (allow != 0) { memcpy(target + allow, kTahoeMTLAllowReplace, sizeof(kTahoeMTLAllowReplace)); }
         return true;

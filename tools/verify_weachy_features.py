@@ -354,6 +354,10 @@ def validate_cache(snapshot, arrays, major):
     if major not in (23,24,25): return {'supported_reference':False}
     ref = arrays['kMTLControlPage_'+{23:'Sonoma',24:'Sequoia',25:'Tahoe'}[major]]
     expected = bytearray(ref)
+    sequoia24H232 = major==24 and snapshot.get('cache_uuid_hex')=='90db0deb23443601b011b87312d74cfb'
+    if sequoia24H232:
+        if expected[0x92c]!=0xd0:return {'reference_table_consistent':False}
+        expected[0x92c]=0xc8
     gate = {23:0x1bc,24:0x164,25:0x708}[major]
     expected[gate:gate+2] = bytes.fromhex('eb00' if major==25 else 'eb0b')
     if major==25:
@@ -369,7 +373,7 @@ def validate_cache(snapshot, arrays, major):
     identities={23:'4c1441fd8a543dc2863d49110b946a25',24:'42ec2890bc40317ebb2745142bff7f26',
                 25:'3137475689b434e8a34f56c5d57216a1'}
     return {'supported_reference':True,
-            'shared_cache_UUID_matches':snapshot.get('cache_uuid_hex')==identities[major],
+            'shared_cache_UUID_matches':snapshot.get('cache_uuid_hex')==identities[major] or sequoia24H232,
             'LegacyBlend_complete_page_matches':snapshot.get('metal_page_hex')==expected.hex(),
             'SubmitGuard_entry_matches':target>0 and snapshot.get('submit_guard_entry_hex')==entry.hex(),
             'SubmitGuard_payload_matches':target>0 and snapshot.get('submit_guard_payload_hex')==payload.hex(),
@@ -532,8 +536,11 @@ def main():
     profile_ok=True
     d={}
     if a.deployment:
-        d=json.loads(a.deployment.read_text());deployment_ok=uuid==d['debug_UUID']
-        summary['expected_debug_UUID_loaded']=deployment_ok
+        d=json.loads(a.deployment.read_text())
+        expected_uuid=d.get('release_UUID') or d.get('debug_UUID')
+        deployment_ok=bool(expected_uuid) and uuid==expected_uuid
+        summary['expected_deployed_UUID_loaded']=deployment_ok
+        if d.get('debug_UUID'):summary['expected_debug_UUID_loaded']=deployment_ok
         for name,expected in d.get('probe_sha256',{}).items():
             path=ROOT/'build/tools'/name
             deployment_ok=deployment_ok and path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==expected

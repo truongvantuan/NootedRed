@@ -165,6 +165,17 @@ int main() {
   assert(!legacyBlendPlan(major,changed,target,offset,first,size));
  }
  assert(!legacyBlendPlan(26,kMTLControlPage_Sequoia,target,offset,first,size));
+ // 24H232: exactly one non-patch byte differs; preserve it and reject all
+ // other changes, including a third value at the variant byte.
+ std::memcpy(changed,kMTLControlPage_Sequoia,4096); changed[0x92c]=0xc8;
+ assert(legacyBlendPlan(24,changed,target,offset,first,size));
+ assert(offset==0x3087b3000ULL && first==0x164 && size==2);
+ for(size_t i=0;i<4096;i++) assert(target[i]==(i==first?0xeb:changed[i]));
+ std::memcpy(changed,target,4096);
+ assert(legacyBlendPlan(24,changed,target,offset,first,size));
+ changed[0x92c]=0xc9; assert(!legacyBlendPlan(24,changed,target,offset,first,size));
+ changed[0x92c]=0xc8; changed[0x900]^=1;
+ assert(!legacyBlendPlan(24,changed,target,offset,first,size));
  for(unsigned major : {22,23,24,25}) {
   UInt8 header[104]{}; std::memcpy(header,UserSharedCacheData::magic,16);
   const auto* uuid=major==22?UserSharedCacheData::ventura:major==23?UserSharedCacheData::sonoma:major==24?UserSharedCacheData::sequoia:UserSharedCacheData::tahoe;
@@ -172,6 +183,20 @@ int main() {
   header[88]^=1; assert(!UserSharedCacheData::matches(major,header));
  }
  UserPatches patches; SharedRegionCheckArgs args{0};
+ reset(); std::memcpy(regions[base].bytes.data()+88,UserSharedCacheData::sequoia24H232,16);
+ assert(UserSharedCacheData::matches(24,regions[base].bytes.data()));
+ assert(!UserSharedCacheData::matches(23,regions[base].bytes.data()));
+ assert(!UserSharedCacheData::matches(25,regions[base].bytes.data()));
+ regions[base+0x3087b3000ULL].bytes[0x92c]=0xc8;
+ patches.applySubmitGuard(current_proc(),&args);
+ assert(allocations==1 && !originalEntry());
+ assert(NRed::singleton().props["NRedSubmitGuardWindowServerApplied"]==1);
+ assert(NRed::singleton().props["NRedLegacyBlendWindowServerApplied"]==1);
+ assert(regions[base+0x3087b3000ULL].bytes[0x92c]==0xc8);
+ patches.applySubmitGuard(current_proc(),&args); assert(allocations==1);
+ reset(); std::memcpy(regions[base].bytes.data()+88,UserSharedCacheData::sequoia24H232,16);
+ regions[base].bytes[103]^=1; patches.applySubmitGuard(current_proc(),&args);
+ assert(allocations==0 && originalEntry());
  reset(); patches.applySubmitGuard(current_proc(),&args);
  assert(allocations==1 && deallocations==0 && !originalEntry());
  assert(NRed::singleton().props["NRedSubmitGuardWindowServerApplied"]==1);

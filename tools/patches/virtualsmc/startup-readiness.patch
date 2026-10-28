@@ -1,0 +1,123 @@
+diff --git a/VirtualSMC/kern_startup.hpp b/VirtualSMC/kern_startup.hpp
+new file mode 100644
+index 0000000..2038332
+--- /dev/null
++++ b/VirtualSMC/kern_startup.hpp
+@@ -0,0 +1,17 @@
++// Single-transition publication gate for VirtualSMC's two startup producers.
++#pragma once
++#include <stdint.h>
++#include <stdatomic.h>
++
++namespace VSMCStartup {
++    static constexpr uint32_t ServicingReady = 1U;
++    static constexpr uint32_t MmioReady = 2U;
++    static constexpr uint32_t AllReady = ServicingReady | MmioReady;
++
++    // The last producer acquires the other producer's completed initialization
++    // and alone owns publication. Repeated notifications cannot publish twice.
++    inline bool arrive(_Atomic(uint32_t) *state, uint32_t ready) {
++        const auto previous = atomic_fetch_or_explicit(state, ready, memory_order_acq_rel);
++        return (previous & AllReady) != AllReady && ((previous | ready) & AllReady) == AllReady;
++    }
++}
+diff --git a/VirtualSMC/kern_vsmc.cpp b/VirtualSMC/kern_vsmc.cpp
+index d2d53e8..09f838a 100644
+--- a/VirtualSMC/kern_vsmc.cpp
++++ b/VirtualSMC/kern_vsmc.cpp
+@@ -23,8 +23,7 @@
+ OSDefineMetaClassAndStructors(VirtualSMC, IOACPIPlatformDevice)
+ 
+ VirtualSMC *VirtualSMC::instance;
+-_Atomic(bool) VirtualSMC::mmioReady;
+-_Atomic(bool) VirtualSMC::servicingReady;
++_Atomic(uint32_t) VirtualSMC::startupReady;
+ 
+ IOService *VirtualSMC::probe(IOService *provider, SInt32 *score) {
+ 	auto service = IOService::probe(provider, score);
+@@ -153,21 +152,14 @@ bool VirtualSMC::start(IOService *provider) {
+ 	// Service initialisation may be delayed to allow trap hook to be initialised
+ 	instance = this;
+ 
+-	// Report servicing as now ready.
+-	atomic_store_explicit(&servicingReady, true, memory_order_release);
+-
+ 	// For first generation the initialisation is handled entirely in a private manner.
+-	// For second generation perform initialisation when MMIO landed earlier and requested
+-	// servicing to perform the initialisation.
+-	bool shouldServicingInit = deviceInfo.getGeneration() == SMCInfo::Generation::V1 ||
+-		atomic_load_explicit(&mmioReady, memory_order_acquire);
+-
+-	if (shouldServicingInit) {
+-		registerService();
+-		publishResource(VirtualSMCAPI::SubmitPlugin);
+-		// Retain ourselves to avoid crashes if lilu is missing (only valid for first gen).
++	// For second generation, publish exactly once when servicing and MMIO are
++	// both ready. One atomic RMW avoids both missed and duplicate publication.
++	const auto ready = VSMCStartup::ServicingReady |
++		(deviceInfo.getGeneration() == SMCInfo::Generation::V1 ? VSMCStartup::MmioReady : 0U);
++	bool shouldServicingInit = reportReady(ready);
++	if (shouldServicingInit)
+ 		ADDPR(startSuccess) = true;
+-	}
+ 
+ 	DBGLOG("vsmc", "starting up vsmc service (%d) " PRIKADDR, shouldServicingInit, CASTKADDR(this));
+ 
+diff --git a/VirtualSMC/kern_vsmc.hpp b/VirtualSMC/kern_vsmc.hpp
+index 76325c2..a875f01 100644
+--- a/VirtualSMC/kern_vsmc.hpp
++++ b/VirtualSMC/kern_vsmc.hpp
+@@ -20,6 +20,7 @@
+ #include "kern_mmio.hpp"
+ #include "kern_keystore.hpp"
+ #include "kern_intrs.hpp"
++#include "kern_startup.hpp"
+ 
+ class EXPORT VirtualSMC : public IOACPIPlatformDevice {
+ 	OSDeclareDefaultStructors(VirtualSMC)
+@@ -127,12 +128,11 @@ class EXPORT VirtualSMC : public IOACPIPlatformDevice {
+ 	 * Flag to mark MMIO support as ready.
+ 	 * This is set when MMIO provider seems AppleSMC kexts and reports ready to handle requests.
+ 	 */
+-	static _Atomic(bool) mmioReady;
++	static _Atomic(uint32_t) startupReady;
+ 
+ 	/**
+ 	 * Flag to mark service support as ready
+ 	 */
+-	static _Atomic(bool) servicingReady;
+ 
+ 	/**
+ 	 *  Software implementation for watchdog work loop
+@@ -264,7 +264,7 @@ public:
+ 	 *  @return true on success
+ 	 */
+ 	static bool isServicingReady() {
+-		return atomic_load_explicit(&servicingReady, memory_order_acquire);
++		return (atomic_load_explicit(&startupReady, memory_order_acquire) & VSMCStartup::ServicingReady) != 0;
+ 	}
+ 
+ 	/**
+@@ -282,12 +282,19 @@ public:
+ 	 * generation mode, meaning, we requested for MMIO handler to register the service.
+ 	 */
+ 	static void postMmioReady() {
+-		bool shouldMmioInit = atomic_load_explicit(&servicingReady, memory_order_acquire);
+-		atomic_store_explicit(&mmioReady, true, memory_order_release);
+-		if (shouldMmioInit && !isFirstGeneration()) {
++		reportReady(VSMCStartup::MmioReady);
++	}
++
++	static bool reportReady(uint32_t ready) {
++		if (VSMCStartup::arrive(&startupReady, ready)) {
++			instance->setProperty("StartupReadinessGate", static_cast<uint64_t>(1), 32);
++			instance->setProperty("StartupReadyFlags", static_cast<uint64_t>(VSMCStartup::AllReady), 32);
+ 			instance->registerService();
+ 			instance->publishResource(VirtualSMCAPI::SubmitPlugin);
++			SYSLOG("vsmc", "startup registration complete (atomic readiness gate v1)");
++			return true;
+ 		}
++		return false;
+ 	}
+ 
+ 	/**
