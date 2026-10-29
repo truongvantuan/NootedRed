@@ -24,18 +24,61 @@ namespace UserCacheResolver
         return !input.failed;
     }
 
+    struct ScanAnchor
+    {
+        UInt32 offset;
+        UInt8  value;
+    };
+
+    // 由 tools/analyze_anchor_frequency.py 从生成函数数据统计的字节稀有度秩：
+    // 0 最少见。仅决定 memchr 过滤字节的选择，不参与候选匹配语义。
+    inline constexpr UInt8 AnchorRarity[256] = {
+        0xFF, 0xF9, 0xF0, 0xE9, 0xF5, 0xE6, 0x8F, 0xE3, 0xE4, 0xD9, 0x77, 0xB0, 0xB8, 0xA2, 0x8A, 0xF8,
+        0xE0, 0xD0, 0x6F, 0x85, 0xAE, 0x8E, 0x5F, 0x29, 0xCD, 0x3E, 0x3F, 0x33, 0x4C, 0x45, 0x49, 0x9C,
+        0xD6, 0x92, 0x65, 0x8B, 0xEA, 0xA6, 0x40, 0x78, 0xB1, 0x86, 0x2A, 0x2B, 0x87, 0x05, 0x4A, 0x6B,
+        0xB5, 0xE8, 0x6C, 0x80, 0x83, 0x57, 0x00, 0x8C, 0xBE, 0xB6, 0x9A, 0x70, 0x79, 0x94, 0x14, 0x37,
+        0xDC, 0xFA, 0xB7, 0x95, 0xDE, 0xED, 0xA7, 0x7C, 0xFD, 0xF3, 0x9E, 0x0D, 0xF1, 0xC8, 0x7F, 0x58,
+        0xD5, 0x2C, 0x19, 0x6D, 0x7A, 0x9D, 0x5B, 0x84, 0xC3, 0x0E, 0x50, 0x66, 0x67, 0x93, 0x68, 0x4D,
+        0xAC, 0x2D, 0x2E, 0x23, 0x1A, 0x1B, 0x46, 0x1C, 0x88, 0x06, 0x07, 0x0F, 0x4E, 0x41, 0x15, 0x2F,
+        0xA0, 0x1D, 0x42, 0x1E, 0xE5, 0xE2, 0x43, 0x51, 0xC1, 0x72, 0x60, 0x38, 0x81, 0x24, 0x52, 0x53,
+        0xEB, 0xD2, 0xA3, 0xF7, 0xEE, 0xF6, 0xCF, 0x39, 0xDD, 0xFB, 0xBD, 0xFC, 0x73, 0xEC, 0x96, 0x34,
+        0xCE, 0x47, 0x1F, 0x30, 0xAD, 0xD4, 0x54, 0x74, 0x82, 0x25, 0x0A, 0x61, 0x26, 0x5C, 0x20, 0x10,
+        0x89, 0x01, 0x02, 0x21, 0x27, 0x4F, 0x0B, 0x16, 0xA9, 0x22, 0x11, 0x08, 0x69, 0x17, 0x28, 0x7D,
+        0x9B, 0x3A, 0x31, 0xC2, 0x62, 0x8D, 0xB9, 0x63, 0xD3, 0xBF, 0xA8, 0xD1, 0x59, 0x97, 0xC6, 0x90,
+        0xEF, 0xF2, 0xBB, 0xBA, 0xD7, 0xC9, 0xDF, 0xD8, 0xDA, 0xCC, 0xA4, 0x35, 0x32, 0x36, 0x98, 0x48,
+        0xAB, 0x99, 0xB2, 0x03, 0xA1, 0x09, 0x75, 0x76, 0x3B, 0x3C, 0x04, 0x71, 0x0C, 0x18, 0x5A, 0xAA,
+        0xDB, 0xCA, 0xC0, 0x44, 0x64, 0x6E, 0xAF, 0x7E, 0xE7, 0xC4, 0x7B, 0xCB, 0x55, 0x4B, 0x6A, 0x3D,
+        0xBC, 0x5D, 0x9F, 0x56, 0x12, 0x13, 0xC5, 0xC7, 0xE1, 0xB3, 0xB4, 0x91, 0xA5, 0x5E, 0xF4, 0xFE,
+    };
+
     template<typename PrefixMatches, typename CandidateMatches>
     __attribute__((noinline))
     inline bool scanBuffered(Input& input, const Range& text, UInt32 size, UInt32 prefixSize,
                              const PrefixMatches& prefixMatches, const CandidateMatches& candidateMatches, UInt64& found,
-                             UInt8* scan, UInt32 capacity)
+                             UInt8* scan, UInt32 capacity, const ScanAnchor* anchor = nullptr)
     {
         found = 0;
+        const bool borrowed=scan&&scan==input.scanBuffer;
+        if(!scan||!prefixSize||capacity<prefixSize||size<prefixSize||size>text.size
+           ||text.size>MaxTextSize||(anchor&&anchor->offset>=prefixSize)||(borrowed&&input.scanBufferInUse))return false;
+        struct BufferLease {
+            Input& input;bool borrowed;
+            BufferLease(Input& in,bool use):input(in),borrowed(use){if(borrowed)input.scanBufferInUse=true;}
+            ~BufferLease(){if(borrowed)input.scanBufferInUse=false;}
+        } lease{input,borrowed};
         for (UInt64 offset = 0; offset <= text.size - size;) {
             const auto length = text.size - offset < capacity ? UInt32(text.size - offset) : capacity;
             if (!input.read(text.address + offset, scan, length)) { return false; }
             const auto positions = length - prefixSize + 1;
             for (UInt32 j = 0; j < positions && offset + j <= text.size - size; ++j) {
+                if(anchor){
+                    const auto remaining=text.size-size-offset-j+1;
+                    const auto count=remaining<positions-j?UInt32(remaining):positions-j;
+                    // Kernel memchr may compare signed chars; libc converts the int back to unsigned.
+                    const auto* next=static_cast<const UInt8*>(memchr(scan+j+anchor->offset,static_cast<signed char>(anchor->value),count));
+                    if(!next)break;
+                    j=UInt32(next-scan)-anchor->offset;
+                }
                 if (!prefixMatches(scan + j)) { continue; }
                 if (++input.candidates > 128) { return false; }
                 const auto address = text.address + offset + j;
@@ -51,20 +94,21 @@ namespace UserCacheResolver
     template<typename PrefixMatches, typename CandidateMatches>
     __attribute__((noinline))
     inline bool scanUnbuffered(Input& input, const Range& text, UInt32 size, UInt32 prefixSize,
-                               const PrefixMatches& prefixMatches, const CandidateMatches& candidateMatches, UInt64& found)
+                               const PrefixMatches& prefixMatches, const CandidateMatches& candidateMatches, UInt64& found,
+                               const ScanAnchor* anchor = nullptr)
     {
         UInt8 scan[1024];
-        return scanBuffered(input, text, size, prefixSize, prefixMatches, candidateMatches, found, scan, sizeof(scan));
+        return scanBuffered(input, text, size, prefixSize, prefixMatches, candidateMatches, found, scan, sizeof(scan), anchor);
     }
 
     template<typename PrefixMatches, typename CandidateMatches>
     __attribute__((noinline))
     inline bool scanFunction(Input& input, const Range& text, UInt32 size, UInt32 prefixSize,
                              const PrefixMatches& prefixMatches, const CandidateMatches& candidateMatches, UInt64& found,
-                             UInt64 hint = 0)
+                             UInt64 hint = 0, const ScanAnchor* anchor = nullptr)
     {
         found = 0;
-        if (prefixSize == 0 || prefixSize > 32 || size < prefixSize || size > text.size || text.size > MaxTextSize) {
+        if (prefixSize == 0 || prefixSize > 32 || (anchor && anchor->offset >= prefixSize) || size < prefixSize || size > text.size || text.size > MaxTextSize) {
             return false;
         }
         // 渲染基线保留完整核验后的参考 RVA 快路径；其他调用默认验证扫描唯一性。
@@ -72,11 +116,11 @@ namespace UserCacheResolver
             found = hint;
             return !input.failed;
         }
-        if (input.scanBuffer) {
+        if (input.scanBuffer&&!input.scanBufferInUse) {
             return scanBuffered(input, text, size, prefixSize, prefixMatches, candidateMatches, found,
-                                input.scanBuffer, Input::ScanSize);
+                                input.scanBuffer, Input::ScanSize, anchor);
         }
-        return scanUnbuffered(input, text, size, prefixSize, prefixMatches, candidateMatches, found);
+        return scanUnbuffered(input, text, size, prefixSize, prefixMatches, candidateMatches, found, anchor);
     }
 
     struct Prefix
@@ -88,6 +132,27 @@ namespace UserCacheResolver
             const auto shift = (index % 8) * 8;
             masks[index / 8] |= UInt64(0xFF) << shift;
             values[index / 8] |= UInt64(value) << shift;
+        }
+        bool commonAnchor(const Prefix& other, ScanAnchor& anchor) const
+        {
+            // 在所有共同固定字节中选择生成数据里最少见的一个；相同稀有度保留最早位置。
+            UInt32 bestOffset = 32;
+            UInt32 bestCost   = 0x100;
+            for (UInt32 i = 0; i < 32; ++i) {
+                const auto shift = (i % 8) * 8;
+                if (((masks[i / 8] >> shift) & (other.masks[i / 8] >> shift) & 0xFF) == 0xFF
+                    && ((values[i / 8] >> shift) & 0xFF) == ((other.values[i / 8] >> shift) & 0xFF))
+                {
+                    const auto cost = AnchorRarity[UInt8(values[i / 8] >> shift)];
+                    if (cost < bestCost) {
+                        bestCost   = cost;
+                        bestOffset = i;
+                    }
+                }
+            }
+            if (bestOffset == 32) { return false; }
+            anchor = {bestOffset, UInt8(values[bestOffset / 8] >> (bestOffset % 8) * 8)};
+            return true;
         }
         bool matches(const UInt8* bytes) const
         {
@@ -157,18 +222,45 @@ namespace UserCacheResolver
         return function.original[index];
     }
 
+    inline bool referencesOrdered(const Reference* refs, UInt32 count)
+    {
+        for (UInt32 i = 1; i < count; ++i) {
+            if (refs[i - 1].offset > refs[i].offset) { return false; }
+        }
+        return true;
+    }
+
+    template<typename Patch>
+    inline bool matches(Input& input, UInt64 address, const Function& function, UInt32 f, bool patched,
+                        const Patch* patches, const Location* locations, UInt32 count, bool ordered)
+    {
+        const auto* refs     = patched ? function.patchedRefs : function.originalRefs;
+        const auto  refCount = patched ? function.patchedCount : function.originalCount;
+        UInt32      cursor{0};
+        return matchBytes(input, address, function.size,
+                          [&](UInt32 index, UInt8 value)
+                          {
+                              if (!ordered) {
+                                  return skipped(index, refs, refCount)
+                                         || value == expected(function, index, f, patched, patches, locations, count);
+                              }
+                              while (cursor < refCount && index >= refs[cursor].offset
+                                     && index - refs[cursor].offset >= 4) {
+                                  ++cursor;
+                              }
+                              return (cursor < refCount && index >= refs[cursor].offset)
+                                     || value == expected(function, index, f, patched, patches, locations, count);
+                          });
+    }
+
     template<typename Patch>
     inline bool matches(Input& input, UInt64 address, const Function& function, UInt32 f, bool patched,
                         const Patch* patches, const Location* locations, UInt32 count)
     {
         const auto* refs     = patched ? function.patchedRefs : function.originalRefs;
         const auto  refCount = patched ? function.patchedCount : function.originalCount;
-        return matchBytes(input, address, function.size,
-                          [&](UInt32 index, UInt8 value)
-                          {
-                              return skipped(index, refs, refCount)
-                                     || value == expected(function, index, f, patched, patches, locations, count);
-                          });
+        return matches(input, address, function, f, patched, patches, locations, count,
+                       referencesOrdered(refs, refCount));
     }
 
     template<typename Patch, typename CandidateFilter>
@@ -177,10 +269,12 @@ namespace UserCacheResolver
     {
         if (function.size < 32) { return false; }
         Prefix prefixes[2];
+        bool ordered[2]{};
         // 扫描热点只比较已准备的前缀，避免对每个文本字节重新遍历整份补丁表。
         for (UInt32 variant = 0; variant < 2; ++variant) {
             const auto* refs      = variant ? function.patchedRefs : function.originalRefs;
             const auto  countRefs = variant ? function.patchedCount : function.originalCount;
+            ordered[variant]=referencesOrdered(refs,countRefs);
             for (UInt32 i = 0; i < 32; ++i) {
                 prefixes[variant].set(i, expected(function, i, f, variant != 0, patches, locations, count),
                                       skipped(i, refs, countRefs));
@@ -194,7 +288,7 @@ namespace UserCacheResolver
         const auto candidateMatches = [&](UInt64 candidate)
         {
             for (UInt32 variant = 0; variant < 2; ++variant) {
-                if (matches(input, candidate, function, f, variant != 0, patches, locations, count)
+                if (matches(input, candidate, function, f, variant != 0, patches, locations, count, ordered[variant])
                     && filter(candidate, variant != 0)) {
                     patched = variant != 0;
                     return true;
@@ -202,7 +296,9 @@ namespace UserCacheResolver
             }
             return false;
         };
-        return scanFunction(input, text, function.size, 32, prefixMatches, candidateMatches, address);
+        ScanAnchor anchor;
+        const bool haveAnchor=prefixes[0].commonAnchor(prefixes[1],anchor);
+        return scanFunction(input, text, function.size, 32, prefixMatches, candidateMatches, address,0,haveAnchor?&anchor:nullptr);
     }
 
     template<typename Patch>

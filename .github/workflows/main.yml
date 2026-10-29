@@ -79,6 +79,9 @@ jobs:
           python3 tools/test_exact_cache_resolver.py
           python3 tools/test_surface_exact_plan.py
           python3 tools/test_surface_safety_adapter.py
+          python3 tools/test_cache_metadata.py
+          python3 tools/test_cache_scan_anchor.py
+          python3 tools/test_cache_scan_anchor.py --kernel-memchr
           python3 tools/test_video_capabilities.py
           python3 tools/test_vcn_gfxoff.py
           python3 tools/test_user_patch_installation.py

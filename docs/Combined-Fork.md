@@ -58,7 +58,8 @@ upstreams' Quick Look/Metal hang investigation. Neither change is hardware-valid
 The 1.0.0 update corrects the shared-region syscall wrapper to forward process, argument and return-value
 pointers, and reads the process's shared-cache base before applying SubmitGuard. Its new LegacyBlend
 patch runs from that SubmitGuard path, independently of GLFIX, using Darwin-specific reference pages.
-`-NRedNoSubmitGuard` disables both. Local v2 corrections run LegacyBlend even on repeated SubmitGuard
+Current controls are independent: `-NRedNoSubmitGuard` disables SubmitGuard and
+`-NRedNoLegacyBlend` disables LegacyBlend. Local v2 corrections run LegacyBlend even on repeated SubmitGuard
 checks, reject full-page mismatches and preserve the downstream RBPlus predicate on Sonoma/Sequoia.
 The upstream dynamic allow offsets were inside unrelated instructions. Exact, semantic and resolver
 paths now use the same gate-only strategy on those two OS families. Tahoe retains its gate/allow pair. The existing
@@ -83,7 +84,8 @@ patches in both the exact-page and contextual-site paths. These changes require 
 | `-NRedVCNSafety` | Experimental private guard-first media transaction, limited to Darwin24/24H232 and eligible VCN2.2 profiles; requires a video mode. Off by default, hardware acceptance pending. See [integration notes](Codec-Guard-Integration-20261028.md). |
 | `-NRedSurfaceFix` | Experimental private SRD/scratch transaction for the exact 24H232 profile and supported APUs. Requires rendering fixes; respects SubmitGuard/LegacyBlend controls. Off by default, hardware acceptance pending. See [installer notes](Steve-Surface-Installer-20261029.md). |
 | `-NRedForceVDA` | Override the external AMD GPU block |
-| `-NRedNoSubmitGuard` | Disable the otherwise-default Metal SubmitGuard and its LegacyBlend path |
+| `-NRedNoSubmitGuard` | Disable the otherwise-default Metal SubmitGuard; LegacyBlend has a separate control |
+| `-NRedNoLegacyBlend` | Disable LegacyBlend; preserves the independent SubmitGuard control |
 | `-NRedDPFix` | Opt into the guarded DisplayPort recovery candidate on the inspected Renoir/Sonoma build |
 
 Keep unrelated boot arguments. Use one video mode; existing `-NRedGLFix -NRedVDA` remains supported.

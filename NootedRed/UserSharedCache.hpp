@@ -37,6 +37,9 @@ namespace UserSharedCache
         ContextReader         contextReader{nullptr};
         // 由单次事务的堆工作区提供，不保存任何进程的匹配结果。
         UInt8*                scanBuffer{nullptr};
+        // The same workspace may serve metadata and text scans. Metadata must
+        // not overwrite a live outer scan during a nested candidate callback.
+        bool                  scanBufferInUse{false};
         static constexpr UInt32 ScanSize = 4096;
         void selectImages(UInt64 base, const ImageReference* refs, UInt32 count)
         {
@@ -188,6 +191,7 @@ namespace UserSharedCache
             if (pathReadSize < input.imageRefs[p].size) { pathReadSize = input.imageRefs[p].size; }
         }
         UInt8 entries[512];
+        Range pathWindow;
         for (UInt32 i = 0; !input.tableRead && i < imageCount;) {
             const auto count = imageCount - i < 16 ? imageCount - i : 16;
             if (!input.read(base + imagesOffset + static_cast<UInt64>(i) * 32, entries, count * 32)) { return false; }
@@ -196,7 +200,16 @@ namespace UserSharedCache
                 const auto  pathOffset = word(entry + 24);
                 if (!metadata.contains(base + pathOffset, pathReadSize)) { return false; }
                 char path[256];
-                if (!input.read(base + pathOffset, path, pathReadSize)) { return false; }
+                if(input.scanBuffer&&!input.scanBufferInUse){
+                    const auto address=base+pathOffset;
+                    if(!pathWindow.contains(address,pathReadSize)){
+                        const auto remaining=metadata.size-pathOffset;
+                        const auto length=remaining<Input::ScanSize?UInt32(remaining):Input::ScanSize;
+                        if(!input.read(address,input.scanBuffer,length))return false;
+                        pathWindow={address,length};
+                    }
+                    memcpy(path,input.scanBuffer+(address-pathWindow.address),pathReadSize);
+                }else if(!input.read(base+pathOffset,path,pathReadSize)){return false;}
                 for (UInt32 p = 0; p < input.imageCount; ++p) {
                     if (memcmp(path, input.imageRefs[p].path, input.imageRefs[p].size) != 0) { continue; }
                     const auto candidate = wide(entry);

@@ -9,10 +9,10 @@ build/steve-latest-20261029/source/.
 | Commits | Change | Local assessment |
 | --- | --- | --- |
 | 4c0f41d | Shared display manifests, transactions, capability/dependency state, GL page backend, executable-resource lifecycle, display evidence and display/video coordinator | Our code already has one native shared-region call, one map lease and one GL validation owner. The new coordinator is unnecessary for those local owners. Adapt verified ordering/transaction semantics; audit remaining evidence/state behavior separately before replacing working paths. |
-| ac69f84 | Sequential relocation checks, buffered metadata paths and scan filtering | Useful independent performance candidates. Evaluate buffer ownership and equivalence before adoption; not installed yet. |
+| ac69f84 | Sequential relocation checks, buffered metadata paths and scan filtering | Adapted with nested buffer ownership, equivalence/fault tests and measured read reductions; see the resolver-performance checkpoint. |
 | 7ba8b8d | Resolution counters and a native shared-region latency probe | Diagnostic evidence, not patch authorization or GPU performance. Our own passive surface probe and host measurements remain separate. |
 | 31b65c0 | Bounded resolution cache | Needs current mapping/layout identity, concurrency and retained-validation review. No local cross-process match cache is introduced by this checkpoint. |
-| f08df66 | Rarity-selected anchor prefilter, including signed-byte kernel memchr handling | Retains full candidate verification in upstream. Test high-byte anchors, masked prefixes, ambiguity and bounds against the local scanner before migration. |
+| f08df66 | Rarity-selected anchor prefilter, including signed-byte kernel memchr handling | Adapted with full candidate verification retained; libc and signed-byte kernel models, masked prefixes, ambiguity and bounds pass local tests. |
 | f7d9ce7 | Cached-location verification | Treat locations as hints and retain full native/patched functions and target checks. Our pinned-UUID exact-location path remains independently tested. |
 | cef3ff5, fa08caf | Use verified cached locations in video and Metal | Upstream enables FVRC only with explicit `-NRedFVRC`. Its policy/lifetime dependencies are not automatically compatible with our current owners. Continue evaluation after the current surface checkpoint. |
 
@@ -31,3 +31,5 @@ Remaining work is feature selection and equivalent local tests, then measured
 runtime acceptance. Source/host checks alone cannot prove absence of regressions.
 
 Source: https://github.com/steve12311/NootedRed/tree/fa08caf2005ba4fc09d4250c33e3340d287ca5d3
+
+The independent scan/cursor/metadata changes now pass all 52 local workflow checks; see [the performance checkpoint](Steve-Resolver-Performance-20261029.md). This does not adopt FVRC or establish hardware acceptance.
