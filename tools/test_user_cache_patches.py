@@ -24,6 +24,8 @@ SHIM = r'''
 #include <UserCodePatch.hpp>
 #include <UserSharedCacheData.hpp>
 #include <UserSubmitGuard.hpp>
+#include <SurfaceSafetyPolicy.hpp>
+char osversion[32]="24H232";
 using mach_vm_address_t=uint64_t; using mach_vm_offset_t=uint64_t;
 using vm_address_t=uint64_t; using vm_map_t=void*; using proc_t=void*;
 constexpr unsigned PAGE_SIZE=4096;
@@ -294,6 +296,16 @@ int main() {
     assert(allocations==int(enabled&&status==0));
     assert((NRed::singleton().props["NRedLegacyBlendApplied"]>0)==(!halted&&!installed&&blend&&status==0));
    }
+ // Early preparation must not authorize writes before the exact build is known.
+ version.value=24;
+ for(const char* build:{"","24H32","24H232x","24H232"}){
+  reset();returnedEntitlement=nullptr;std::strcpy(osversion,build);SurfaceSafety::calls=0;
+  SurfaceSafety::result=SurfaceSafety::Result::Installed;
+  hooked.surfaceSafetyEnabled=true;hooked.submitGuardEnabled=true;hooked.legacyBlendEnabled=true;
+  hooked.applySubmitGuard(current_proc(),&args);
+  assert(SurfaceSafety::calls==int(!strcmp(build,"24H232")));
+ }
+ std::strcpy(osversion,"24H232");
  // A requested SubmitGuard must verify before new SRD/scratch changes are allowed;
  // existing legacy and independent codec behavior remain available on failure.
  for(unsigned failure=0;failure<2;++failure){

@@ -691,9 +691,11 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
     NRed::singleton().setProp32("NRedVCNSafetyOwnsMedia",this->mediaSafetyEnabled?1:0);
     if (this->mediaSafetyEnabled) { this->vdaResolverEnabled=false; }
     this->surfaceSafetyEnabled=this->enabled&&profile&&profile->graphics.conditionalDualQuad
-        &&SurfaceSafetyPolicy::eligible(checkKernelArgument("-NRedSurfaceFix"),osversion,
+        &&SurfaceSafetyPolicy::canPrepare(checkKernelArgument("-NRedSurfaceFix"),
                                         currentKernelVersion().major(),NRed::singleton().getDeviceID());
-    NRed::singleton().setProp32("NRedSurfaceFixRequested",this->surfaceSafetyEnabled?1:0);
+    NRed::singleton().setProp32("NRedSurfaceFixRequested",checkKernelArgument("-NRedSurfaceFix")?1:0);
+    NRed::singleton().setProp32("NRedSurfaceFixInitialBuildMatched",!strcmp(osversion,"24H232")?1:0);
+    NRed::singleton().setProp32("NRedSurfaceFixInitialBuildEmpty",osversion[0]==0?1:0);
     if (this->submitGuardEnabled || this->legacyBlendEnabled || this->mediaSafetyEnabled || this->surfaceSafetyEnabled) {
         this->installSubmitGuard(patcher);
     }
@@ -1499,7 +1501,9 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
     const bool submitReady=!this->submitGuardEnabled
         ||(methodOffset!=0&&this->installMetalSubmitGuard(map,base+methodOffset,process));
     auto surface=SurfaceSafety::Result::Rejected;
-    if(this->surfaceSafetyEnabled&&submitReady&&!isFairPlayClient(current_task())) {
+    if(SurfaceSafetyPolicy::eligible(this->surfaceSafetyEnabled,osversion,kernelMajor,
+                                     NRed::singleton().getDeviceID())&&submitReady&&!isFairPlayClient(current_task())) {
+        NRed::singleton().setProp32("NRedSurfaceFixRuntimeBuildMatched",1);
         surface=SurfaceSafety::install(map,base,NRed::singleton().getDeviceID(),this->legacyBlendEnabled,process?proc_pid(process):0);
         if(surface==SurfaceSafety::Result::Halted)return;
     }

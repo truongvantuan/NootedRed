@@ -55,11 +55,15 @@ static void setup(bool blendAlready=false){
 static auto run(bool blend=true){auto result=SurfaceSafety::install((void*)1,base,0x1636,blend,99);assert(!kernelLive);return result;}
 int main(){using Result=SurfaceSafety::Result;unsigned cases=0;
  for(unsigned device=0;device<65536;++device){
-  assert(SurfaceSafetyPolicy::eligible(true,"24H232",24,device)==bool(Data::findDevice(device)));++cases;
+  assert(SurfaceSafetyPolicy::eligible(true,"24H232",24,device)==bool(Data::findDevice(device)));
+  assert(SurfaceSafetyPolicy::canPrepare(true,24,device)==bool(Data::findDevice(device)));++cases;
  }
  for(bool requested:{false,true})for(const char* build:{"24H232","24H32","","24H232x"})for(unsigned major:{23U,24U,25U}){
   assert(SurfaceSafetyPolicy::eligible(requested,build,major,0x1636)==(requested&&major==24&&!strcmp(build,"24H232")));++cases;
  }
+ assert(!SurfaceSafetyPolicy::eligible(true,nullptr,24,0x1636));
+ assert(!SurfaceSafetyPolicy::canPrepare(false,24,0x1636));
+ assert(!SurfaceSafetyPolicy::canPrepare(true,25,0x1636));
  setup();auto stock=blocks;assert(run()==Result::Installed&&writeCalls==4);rx();
  auto installed=blocks;auto baselineWrites=writeCalls,baselineProtects=protectCalls;
  assert(properties["NRedSurfaceFixRevision"]==1&&properties["NRedSurfaceFixWindowServerPID"]==99);

@@ -91,9 +91,11 @@ int main(){KernelPatcher k;unsigned cases=0;
   p.processPatcher(k);assert(p.surfaceSafetyEnabled&&p.cacheHooks==1&&p.nativeHooks==1);}
  {UserPatches p;p.enabled=false;p.submitGuardEnabled=p.legacyBlendEnabled=false;
   p.processPatcher(k);assert(!p.surfaceSafetyEnabled&&!p.cacheHooks);}
+ // Build identity is unavailable early: prepare only; process-time policy
+ // rejects unknown/mismatched builds before the surface adapter can run.
  for(const char* build:{"24H32","24H232x",""}){
   std::strcpy(osversion,build);UserPatches p;p.submitGuardEnabled=p.legacyBlendEnabled=false;
-  p.processPatcher(k);assert(!p.surfaceSafetyEnabled&&!p.cacheHooks);
+  p.processPatcher(k);assert(p.surfaceSafetyEnabled&&p.cacheHooks==1);
  }
  printf("production installation: %u GL/blend/submit/video/OS combinations; GL-only zero-table hooks retained\n",cases);
 }
