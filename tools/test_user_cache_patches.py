@@ -38,6 +38,7 @@ struct NRed {
     std::map<std::string,unsigned> props;
     static NRed& singleton() { static NRed n; return n; }
     void setProp32(const char* name, unsigned value) { props[name]=value; }
+    unsigned getDeviceID(){return 0x1636;}
 };
 using task_t=void*;
 task_t current_task() { return reinterpret_cast<void*>(1); }
@@ -117,14 +118,17 @@ bool isFairPlayClient(task_t);
 bool bridgeReady=true;
 struct VCNBridge {static VCNBridge& singleton(){static VCNBridge b;return b;}bool loadReady(){return bridgeReady;}};
 namespace MediaSafety {int calls=0;void install(vm_map_t,UInt64,int){++calls;}}
+namespace SurfaceSafety {enum class Result{Rejected,Installed,Halted};int calls=0;Result result=Result::Rejected;
+ Result install(vm_map_t,UInt64,UInt32,bool,int){++calls;return result;}}
 struct SharedRegionCheckArgs { UInt64 startAddress; };
 class UserPatches {
  public:
     static UserPatches& singleton() { static UserPatches value; return value; }
-    bool submitGuardEnabled=true, legacyBlendEnabled=true,mediaSafetyEnabled=false;
+    bool submitGuardEnabled=true, legacyBlendEnabled=true,mediaSafetyEnabled=false,surfaceSafetyEnabled=false;
     UInt64 orgSharedRegionCheck=0;
     static int wrapSharedRegionCheck(proc_t,void*,int*);
     void applySubmitGuard(proc_t,void*); void applyLegacyBlend(vm_map_t,mach_vm_offset_t,proc_t);
+    bool installMetalSubmitGuard(vm_map_t,UInt64,proc_t);
 };
 '''
 CASES = r'''
@@ -273,6 +277,34 @@ int main() {
    assert(allocations==(enabled&&status==0?1:0));
    assert((NRed::singleton().props["NRedLegacyBlendApplied"]>0)==(blend&&status==0));
   }
+ for(auto outcome:{SurfaceSafety::Result::Rejected,SurfaceSafety::Result::Installed,SurfaceSafety::Result::Halted})
+  for(bool surface:{false,true})for(bool fair:{false,true})for(bool enabled:{false,true})
+   for(bool blend:{false,true})for(int status:{0,5}){
+    reset();SurfaceSafety::calls=MediaSafety::calls=0;SurfaceSafety::result=outcome;bridgeReady=true;
+    returnedEntitlement=fair?&trueEntitlement:nullptr;
+    hooked.submitGuardEnabled=enabled;hooked.legacyBlendEnabled=blend;
+    hooked.surfaceSafetyEnabled=surface;hooked.mediaSafetyEnabled=true;
+    int result=0;syscallResult=status;expectedArgs=&args;expectedReturn=&result;
+    assert(UserPatches::wrapSharedRegionCheck(current_proc(),&args,&result)==status&&result==37);
+    const bool called=surface&&!fair&&status==0;
+    const bool halted=called&&outcome==SurfaceSafety::Result::Halted;
+    const bool installed=called&&outcome==SurfaceSafety::Result::Installed;
+    assert(SurfaceSafety::calls==int(called));
+    assert(MediaSafety::calls==int(!halted&&!fair&&status==0));
+    assert(allocations==int(enabled&&status==0));
+    assert((NRed::singleton().props["NRedLegacyBlendApplied"]>0)==(!halted&&!installed&&blend&&status==0));
+   }
+ // A requested SubmitGuard must verify before new SRD/scratch changes are allowed;
+ // existing legacy and independent codec behavior remain available on failure.
+ for(unsigned failure=0;failure<2;++failure){
+  reset();returnedEntitlement=nullptr;SurfaceSafety::calls=MediaSafety::calls=0;
+  SurfaceSafety::result=SurfaceSafety::Result::Installed;bridgeReady=true;
+  hooked.submitGuardEnabled=hooked.legacyBlendEnabled=hooked.mediaSafetyEnabled=hooked.surfaceSafetyEnabled=true;
+  if(failure==0)corruptPayload=true;else regions[methodAddress&~4095ULL].bytes[methodAddress&4095]^=1;
+  hooked.applySubmitGuard(current_proc(),&args);
+  assert(!SurfaceSafety::calls&&MediaSafety::calls==1);
+  assert(NRed::singleton().props["NRedLegacyBlendApplied"]>0);
+ }
  std::puts("production cache patches: page plans, syscall ordering, UUID rejection, idempotency, sealed payload permissions, permission failure/readback rejection, partial-write rollback and retained reachable payload passed");
 }
 '''
@@ -288,6 +320,7 @@ def main():
     helpers = '\n'.join(method(source,name) for name in ('__attribute__((noinline)) bool userBytesEqual(', '__attribute__((noinline)) bool validSubmitGuardEntry('))
     bodies = '\n'.join(method(source,name) for name in (
         '__attribute__((noinline)) void UserPatches::applySubmitGuard(',
+        '__attribute__((noinline)) bool UserPatches::installMetalSubmitGuard(',
         '__attribute__((noinline)) void UserPatches::applyLegacyBlend('))
     with tempfile.TemporaryDirectory(prefix='nred-user-cache-') as directory:
         path = Path(directory)

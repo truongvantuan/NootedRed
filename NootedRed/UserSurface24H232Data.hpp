@@ -1575,7 +1575,5 @@ inline constexpr UserCacheResolver::Reference ResolverPatchedRefs0[] = {
 inline constexpr UserCacheResolver::Function ResolverFunctions[] = {
     {0, 0x6C580ULL, ResolverOriginal0, sizeof(ResolverOriginal0), ResolverOriginalRefs0, 3, ResolverPatchedRefs0, 3},
 };
-inline constexpr UserCacheResolver::Location ResolverLocations[] = {
-};
 }
 }

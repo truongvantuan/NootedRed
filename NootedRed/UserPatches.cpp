@@ -25,6 +25,8 @@
 #include <VDATableSelection.hpp>
 #include <MediaSafety.hpp>
 #include <MediaSafetyPolicy.hpp>
+#include <SurfaceSafety.hpp>
+#include <SurfaceSafetyPolicy.hpp>
 #include <Headers/kern_api.hpp>
 #include <Headers/kern_mach.hpp>
 #include <Headers/kern_util.hpp>
@@ -688,7 +690,11 @@ void UserPatches::processPatcher(KernelPatcher& patcher)
         osversion,currentKernelVersion().major(),NRed::singleton().getDeviceID());
     NRed::singleton().setProp32("NRedVCNSafetyOwnsMedia",this->mediaSafetyEnabled?1:0);
     if (this->mediaSafetyEnabled) { this->vdaResolverEnabled=false; }
-    if (this->submitGuardEnabled || this->legacyBlendEnabled || this->mediaSafetyEnabled) {
+    this->surfaceSafetyEnabled=this->enabled&&profile&&profile->graphics.conditionalDualQuad
+        &&SurfaceSafetyPolicy::eligible(checkKernelArgument("-NRedSurfaceFix"),osversion,
+                                        currentKernelVersion().major(),NRed::singleton().getDeviceID());
+    NRed::singleton().setProp32("NRedSurfaceFixRequested",this->surfaceSafetyEnabled?1:0);
+    if (this->submitGuardEnabled || this->legacyBlendEnabled || this->mediaSafetyEnabled || this->surfaceSafetyEnabled) {
         this->installSubmitGuard(patcher);
     }
 
@@ -1445,7 +1451,7 @@ __attribute__((noinline)) int UserPatches::wrapSharedRegionCheck(proc_t process,
 {
     auto& patches = singleton();
     const auto result = FunctionCast(wrapSharedRegionCheck, patches.orgSharedRegionCheck)(process, args, returnValue);
-    if (result == 0 && (patches.submitGuardEnabled || patches.legacyBlendEnabled || patches.mediaSafetyEnabled) && args != nullptr) {
+    if (result == 0 && (patches.submitGuardEnabled || patches.legacyBlendEnabled || patches.mediaSafetyEnabled || patches.surfaceSafetyEnabled) && args != nullptr) {
         const auto map = getTaskMapFunc ? getTaskMapFunc(current_task()) : nullptr;
         UserPatchMapGate::Lease<64> lease(cachePatchMaps, cachePatchLock, map, current_thread());
         if (lease) {
@@ -1465,7 +1471,7 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
 
     const auto kernelMajor = currentKernelVersion().major();
     const auto methodOffset = UserSubmitGuardData::getMethodOffset(kernelMajor);
-    if (methodOffset == 0 && !this->legacyBlendEnabled) { return; }
+    if (methodOffset == 0 && !this->legacyBlendEnabled && !this->mediaSafetyEnabled && !this->surfaceSafetyEnabled) { return; }
 
     auto map = getTaskMapFunc(current_task());
     if (map == nullptr) {
@@ -1490,36 +1496,44 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
         NRed::singleton().setProp32("NRedSubmitGuardRejected", 1);
         return;
     }
+    const bool submitReady=!this->submitGuardEnabled
+        ||(methodOffset!=0&&this->installMetalSubmitGuard(map,base+methodOffset,process));
+    auto surface=SurfaceSafety::Result::Rejected;
+    if(this->surfaceSafetyEnabled&&submitReady&&!isFairPlayClient(current_task())) {
+        surface=SurfaceSafety::install(map,base,NRed::singleton().getDeviceID(),this->legacyBlendEnabled,process?proc_pid(process):0);
+        if(surface==SurfaceSafety::Result::Halted)return;
+    }
     if (this->mediaSafetyEnabled && VCNBridge::singleton().loadReady() && !isFairPlayClient(current_task())) {
         MediaSafety::install(map,base,process?proc_pid(process):0);
     }
     // Independent of SubmitGuard installation success and repeated shared-region checks.
-    if (this->legacyBlendEnabled) { this->applyLegacyBlend(map, base, process); }
-    if (!this->submitGuardEnabled || methodOffset == 0) { return; }
+    if (this->legacyBlendEnabled && surface!=SurfaceSafety::Result::Installed) { this->applyLegacyBlend(map, base, process); }
 
-    const auto method = base + methodOffset;
+}
+
+__attribute__((noinline)) bool UserPatches::installMetalSubmitGuard(vm_map_t map,UInt64 method,proc_t process)
+{
     UInt8 entry[UserSubmitGuardData::MethodPatchSize];
     if (copyInFunc(reinterpret_cast<const void*>(method), entry, sizeof(entry)) != 0) {
-        return;
+        return false;
     }
 
     static constexpr UInt8 patchedPrefix[6] = {0xFF, 0x25, 0x00, 0x00, 0x00, 0x00};
     if (memcmp(entry, patchedPrefix, sizeof(patchedPrefix)) == 0) {
-        if (!validSubmitGuardEntry(map, method, entry)) {
-            NRed::singleton().setProp32("NRedSubmitGuardRejected", 2);
-        }
-        return;
+        const bool valid=validSubmitGuardEntry(map,method,entry);
+        if (!valid) { NRed::singleton().setProp32("NRedSubmitGuardRejected", 2); }
+        return valid;
     }
 
     if (memcmp(entry, UserSubmitGuardData::MethodOriginal, sizeof(entry)) != 0) {
         // Entry does not match expected prologue; safely avoid touching.
-        return;
+        return false;
     }
 
     vm_address_t page{0};
     auto result = vm_allocate(map, &page, PAGE_SIZE, VM_FLAGS_ANYWHERE);
     if (result != KERN_SUCCESS) {
-        return;
+        return false;
     }
 
     UInt8 payload[sizeof(UserSubmitGuardData::Payload)];
@@ -1529,12 +1543,12 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
 
     if (copyOutFunc(payload, reinterpret_cast<void*>(page), sizeof(payload)) != 0) {
         vm_deallocate(map, page, PAGE_SIZE);
-        return;
+        return false;
     }
 
     if (!userBytesEqual(page, payload, sizeof(payload))) {
         vm_deallocate(map, page, PAGE_SIZE);
-        return;
+        return false;
     }
     result = vm_protect(map, page, PAGE_SIZE, FALSE, VM_PROT_READ | VM_PROT_EXECUTE);
     // Seal only our new allocation. Existing cache pages retain their maximum rights
@@ -1542,7 +1556,7 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
     if (result != KERN_SUCCESS
         || vm_protect(map, page, PAGE_SIZE, TRUE, VM_PROT_READ | VM_PROT_EXECUTE) != KERN_SUCCESS) {
         vm_deallocate(map, page, PAGE_SIZE);
-        return;
+        return false;
     }
 
     UInt8 patch[UserSubmitGuardData::MethodPatchSize];
@@ -1557,14 +1571,14 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
         || protection != (VM_PROT_READ | VM_PROT_EXECUTE)
         || maximum != (VM_PROT_READ | VM_PROT_EXECUTE)) {
         vm_deallocate(map, page, PAGE_SIZE);
-        return;
+        return false;
     }
     const auto installed = UserCodePatch::write(memory, method, entry, patch, sizeof(patch));
     if (!installed.applied) {
         // A partially written entry might still reference this payload. Never leave it dangling.
         if (installed.originalRestored) { vm_deallocate(map, page, PAGE_SIZE); }
         NRed::singleton().setProp32("NRedSubmitGuardRejected", installed.originalRestored ? 3 : 4);
-        return;
+        return false;
     }
     {
         static volatile UInt32 appliedCounter{0};
@@ -1584,7 +1598,7 @@ __attribute__((noinline)) void UserPatches::applySubmitGuard(proc_t process, voi
             DBGLOG("UserPatch", "SubmitGuard installed in %s (PID %d)", name, pid);
         }
     }
-
+    return true;
 }
 
 __attribute__((noinline)) void UserPatches::applyLegacyBlend(vm_map_t map, mach_vm_offset_t base, proc_t process)
@@ -1663,6 +1677,10 @@ bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
     if (this->mediaSafetyEnabled && !MediaSafety::configure(copyInFunc,copyOutFunc,queryRegionFunc)) {
         SYSLOG("UserPatch","Private video safety adapter unavailable; media remains stock");
     }
+    if(this->surfaceSafetyEnabled&&!SurfaceSafety::configure(copyInFunc,copyOutFunc,queryRegionFunc)) {
+        this->surfaceSafetyEnabled=false;
+        SYSLOG("UserPatch","Private surface adapter unavailable; existing rendering path retained");
+    }
     // Allocate once, before publishing the hook. Keep this lock alive for the boot,
     // including a routing failure: no request can observe a freed gate.
     if (cachePatchLock == nullptr) { cachePatchLock = IOLockAlloc(); }
@@ -1678,6 +1696,7 @@ bool UserPatches::installSubmitGuard(KernelPatcher& patcher)
     }
 
     NRed::singleton().setProp32("NRedUserMapGateRevision", 1);
+    NRed::singleton().setProp32("NRedSurfaceFixEnabled",this->surfaceSafetyEnabled?1:0);
     NRed::singleton().setProp32("NRedSubmitGuardSupported", UserSubmitGuardData::getMethodOffset(kernelMajor) != 0 ? 1 : 0);
     NRed::singleton().setProp32("NRedSubmitGuardEnabled", this->submitGuardEnabled && UserSubmitGuardData::getMethodOffset(kernelMajor) != 0 ? 1 : 0);
     NRed::singleton().setProp32("NRedSubmitGuardVersion", 2);

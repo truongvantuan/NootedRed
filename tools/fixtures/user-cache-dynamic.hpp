@@ -66,7 +66,7 @@ static void sectionCommands(uint64_t a,const char* path,unsigned image){
  }
  word32(a+20,cursor-32);
 }
-template<size_t I,size_t F>static void cache(const UserCacheResolver::ImageReference(&images)[I],const UserCacheResolver::Function(&functions)[F],bool rebase=false,const UserCacheSectionData::Target* scoped=nullptr,unsigned scopedCount=0){
+template<size_t I,size_t F>static void cache(const UserCacheResolver::ImageReference(&images)[I],const UserCacheResolver::Function(&functions)[F],bool rebase=false,const UserCacheSectionData::Target* scoped=nullptr,unsigned scopedCount=0,bool pinned=false){
  blocks.clear();protections.clear();properties.clear();failedProtectCalls.clear();imageAddresses.clear();functionAddresses.clear();
  writes=protects=failWrite=failedProtect=0;failedRead=0;
  activeSectionTargets.clear();if(scopedCount)activeSectionTargets.assign(scoped,scoped+scopedCount);
@@ -77,21 +77,21 @@ template<size_t I,size_t F>static void cache(const UserCacheResolver::ImageRefer
  word32(base+448,0x1000);word32(base+452,I);word64(base+0x300,unslid);word64(base+0x308,0x20000);word32(base+0x31c,1);
  for(unsigned i=0;i<I;i++){
   // 非顺序映像表，且每个映像的位置与参考缓存不同。
-  auto a=base+0x1000000+i*0x100000;imageAddresses.push_back(a);blocks[a].resize(0x80000);
+  auto a=base+0x1000000+i*(pinned?0x800000:0x100000);imageAddresses.push_back(a);blocks[a].resize(pinned?0x400000:0x80000);
   imagePaths.emplace_back(images[i].path);
   word64(base+0x1000+i*32,a-0x200000);word32(base+0x1018+i*32,0x3000+i*256);put(base+0x3000+i*256,images[i].path,images[i].size);
   word32(a,0xfeedfacf);word32(a+4,0x1000007);word32(a+12,8);word32(a+16,2);word32(a+20,304);
-  auto c=a+32;word32(c,0x19);word32(c+4,232);put(c+8,"__TEXT",7);word64(c+24,a-0x200000);word64(c+32,0x80000);
+  auto c=a+32;word32(c,0x19);word32(c+4,232);put(c+8,"__TEXT",7);word64(c+24,a-0x200000);word64(c+32,pinned?0x400000:0x80000);
   word32(c+56,5);word32(c+60,5);word32(c+64,2);
-  auto s=c+72;put(s,"__text",7);put(s+16,"__TEXT",7);word64(s+32,a+0x1000-0x200000);word64(s+40,0x6f000);
-  s+=80;put(s,"__const",8);put(s+16,"__TEXT",7);word64(s+32,a+0x71000-0x200000);word64(s+40,0x1000);
-  c+=232;word32(c,0x19);word32(c+4,72);put(c+8,"__DATA",7);word64(c+24,a+0x80000-0x200000);word64(c+32,0x78000000);word32(c+60,3);
+  auto s=c+72;put(s,"__text",7);put(s+16,"__TEXT",7);word64(s+32,a+0x1000-0x200000);word64(s+40,pinned?0x3ff000:0x6f000);
+  s+=80;put(s,"__const",8);put(s+16,"__TEXT",7);word64(s+32,a+(pinned?0x3ff000:0x71000)-0x200000);word64(s+40,0x1000);
+  c+=232;word32(c,0x19);word32(c+4,72);put(c+8,"__DATA",7);word64(c+24,a+(pinned?0x400000:0x80000)-0x200000);word64(c+32,0x78000000);word32(c+60,3);
   if(rebase)sectionCommands(a,images[i].path,i);
  }
  unsigned next[I]{};
  for(unsigned f=0;f<F;f++){
   auto i=functions[f].image;
-  auto a=imageAddresses[i]+0x3f80+next[i];next[i]+=((functions[f].size+4095)/4096+2)*4096;
+  auto a=imageAddresses[i]+(pinned?functions[f].rva:0x3f80+next[i]);next[i]+=((functions[f].size+4095)/4096+2)*4096;
   assert(next[i]<0x60000);functionAddresses.push_back(a);put(a,functions[f].original,functions[f].size);
  }
  unsigned binding=0;

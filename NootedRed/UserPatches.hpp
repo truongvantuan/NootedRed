@@ -310,10 +310,12 @@ private:
 
     bool              submitGuardEnabled{false};
     bool              legacyBlendEnabled{false};
+    bool              surfaceSafetyEnabled{false};
     mach_vm_address_t orgSharedRegionCheck{0};
 
     auto installSubmitGuard(KernelPatcher& patcher) -> bool;
     void applySubmitGuard(proc_t process, void* args);
+    bool installMetalSubmitGuard(vm_map_t map,UInt64 method,proc_t process);
     void applyLegacyBlend(vm_map_t map, mach_vm_offset_t base, proc_t process);
     static int wrapSharedRegionCheck(proc_t process, void* args, int* returnValue);
 

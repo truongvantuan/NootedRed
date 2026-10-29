@@ -154,8 +154,10 @@ class ResolverData:
             o = f'ResolverOriginalRefs{i}' if orig else 'nullptr'
             p = f'ResolverPatchedRefs{i}' if patch else 'nullptr'
             out += f'    {{{image}, 0x{rva:X}ULL, ResolverOriginal{i}, sizeof(ResolverOriginal{i}), {o}, {len(orig)}, {p}, {len(patch)}}},\n'
-        out += '};\ninline constexpr UserCacheResolver::Location ResolverLocations[] = {\n'
-        out += ''.join(f'    {{{function}, {offset}}},\n' for function, offset in locations) + '};\n'
+        out += '};\n'
+        if locations:
+            out += 'inline constexpr UserCacheResolver::Location ResolverLocations[] = {\n'
+            out += ''.join(f'    {{{function}, {offset}}},\n' for function, offset in locations) + '};\n'
         if len(self.images) > 16 or len(self.functions) > 32:
             raise ValueError('映像或函数预算超限')
         return out

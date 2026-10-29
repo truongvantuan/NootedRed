@@ -12,14 +12,15 @@ def main():
  p.add_argument('--compile-log',type=Path,required=True)
  p.add_argument('--out',type=Path,required=True)
  p.add_argument('--media-adapter',action='store_true',help='Include the private media adapter translation unit and direct calls across it')
+ p.add_argument('--surface-adapter',action='store_true',help='Include the private surface adapter translation unit and direct calls across it')
  a=p.parse_args();a.out.mkdir(parents=True,exist_ok=True)
  text=re.sub(r'\x1b\[[0-9;]*m','',a.compile_log.read_text())
  candidates=[shlex.split(line) for line in text.splitlines() if line.startswith('/') and 'clang++ -c ' in line
-             and line.endswith(('NootedRed/UserPatches.cpp','NootedRed/MediaSafety.cpp'))]
+             and line.endswith(('NootedRed/UserPatches.cpp','NootedRed/MediaSafety.cpp','NootedRed/SurfaceSafety.cpp'))]
  if not candidates:raise SystemExit('No UserPatches/MediaSafety compile command in supplied log')
  command=candidates[0]
  pos=command.index('-o');del command[pos:pos+2];command.remove('-c');command.pop() # source
- sources=['UserPatches']+(['MediaSafety'] if a.media_adapter else [])
+ sources=['UserPatches']+(['MediaSafety'] if a.media_adapter else [])+(['SurfaceSafety'] if a.surface_adapter else [])
  commands=[];frames={};edges={}
  def symbols(line):return [a or b for a,b in re.findall(r'@(?:"([^"]+)"|([^\s(]+))\(',line)]
  for source in sources:

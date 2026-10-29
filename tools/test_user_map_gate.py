@@ -59,7 +59,7 @@ static int patchSharedRegion(proc_t,SharedRegionCheckArgs*,int result){
  return result;
 }
 struct UserPatches {
- bool submitGuardEnabled=true,legacyBlendEnabled=true,mediaSafetyEnabled=false;
+ bool submitGuardEnabled=true,legacyBlendEnabled=true,mediaSafetyEnabled=false,surfaceSafetyEnabled=false;
  uintptr_t orgSharedRegionCheck=0;
  static UserPatches& singleton(){static UserPatches p;return p;}
  static int wrapSharedRegionCheck(proc_t,void*,int*);
