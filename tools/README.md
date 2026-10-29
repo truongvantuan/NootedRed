@@ -275,3 +275,21 @@ kernel-ring capture; it is not a guarantee against unrelated GPU failures.
 feature matching and existing-instance safety without running Zalo or GPU work.
 See [the investigation](../docs/Zalo-Freeze-20261026.md) for evidence, measured
 results and the HEVC playback limitation.
+
+## Shared-region latency diagnostic
+
+`shared_region_latency.c` measures `shared_region_check_np` including installed
+kext hooks in its own process. It submits no GPU work. The syscall may run the
+normal private-cache patch handlers; use it only on the selected diagnostic boot.
+The first sample is after dyld startup, so it does not measure cold application
+launch, cold boot, native-only latency or GPU throughput.
+
+```sh
+xcrun clang -std=c11 -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+  tools/shared_region_latency.c -o build/tools/shared_region_latency
+build/tools/shared_region_latency 16
+```
+
+Samples must be 1–256; default is 16. JSON reports the first sample, minimum,
+nearest-rank percentiles and maximum in milliseconds. Compare the same machine,
+boot profile and loaded kext identity, retaining boot identity with the output.

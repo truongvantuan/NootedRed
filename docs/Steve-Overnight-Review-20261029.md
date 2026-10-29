@@ -33,3 +33,8 @@ runtime acceptance. Source/host checks alone cannot prove absence of regressions
 Source: https://github.com/steve12311/NootedRed/tree/fa08caf2005ba4fc09d4250c33e3340d287ca5d3
 
 The independent scan/cursor/metadata changes now pass all 52 local workflow checks; see [the performance checkpoint](Steve-Resolver-Performance-20261029.md). This does not adopt FVRC or establish hardware acceptance.
+
+The remaining cache/lifecycle selection now has offline test evidence and an
+explicit component-by-component decision record in
+[Steve-Remaining-Selection-20261029.md](Steve-Remaining-Selection-20261029.md).
+The corrected 9c90257 surface boot and runtime acceptance remain pending.
